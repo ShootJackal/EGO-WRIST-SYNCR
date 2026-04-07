@@ -55,10 +55,13 @@ def resolve_root(root_arg: str | None = None) -> Path:
         return Path(env_root)
 
     if os.name == "nt":
+        candidates = []
         for drive in string.ascii_uppercase:
             candidate = Path(f"{drive}:/NOT UPLOADED")
             if (candidate / "HEAD").exists() and (candidate / "LEFT").exists() and (candidate / "RIGHT").exists():
-                return candidate
+                candidates.append(candidate)
+        if candidates:
+            return sorted(candidates, key=lambda p: str(p).lower())[0]
 
     return Path(r"D:\NOT UPLOADED")
 

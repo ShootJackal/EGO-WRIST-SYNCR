@@ -19,6 +19,10 @@ function Resolve-ProjectRoot([string]$ProvidedRoot) {
         return $ProvidedRoot
     }
 
+    if ($env:TRI_CAM_ROOT -and $env:TRI_CAM_ROOT.Trim().Length -gt 0) {
+        return $env:TRI_CAM_ROOT
+    }
+
     # Prefer any existing <Drive>:\NOT UPLOADED (works for external SSDs too)
     $drives = Get-PSDrive -PSProvider FileSystem | Sort-Object Name
     foreach ($d in $drives) {

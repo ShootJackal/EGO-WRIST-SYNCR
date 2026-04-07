@@ -1,14 +1,16 @@
 # Tri-Cam Sync One-Click Setup
 
 ## Works with any SSD you plug in
-The matcher now auto-finds the first drive that contains:
+The matcher auto-finds the first drive that contains all three folders:
 - `\NOT UPLOADED\HEAD`
 - `\NOT UPLOADED\LEFT`
 - `\NOT UPLOADED\RIGHT`
 
-You can force a specific path with either:
-- CLI: `--root "E:\NOT UPLOADED"`
-- Env var: `TRI_CAM_ROOT=E:\NOT UPLOADED`
+Override priority:
+1. CLI `--root "E:\NOT UPLOADED"`
+2. Env var `TRI_CAM_ROOT=E:\NOT UPLOADED`
+3. Auto-detect drives
+4. Fallback `D:\NOT UPLOADED`
 
 ## Folder layout (exact)
 - `X:\NOT UPLOADED\HEAD`
@@ -21,11 +23,13 @@ You can force a specific path with either:
 1. Put this folder anywhere.
 2. Double-click `ONE_CLICK_SETUP.bat`.
 3. Wait for install to finish.
-4. Drop videos into `HEAD`, `LEFT`, `RIGHT` under your SSD root.
+4. Drop videos into `HEAD`, `LEFT`, and `RIGHT` under your SSD root.
 
 ## Run matching (same as before)
 - Old-compatible command:
   - `python match_3cams.py`
+- Optional explicit root:
+  - `python match_3cams.py "E:\NOT UPLOADED"`
 - Or helper button:
   - Double-click `RUN_MATCH.bat`
 - Or explicit CLI:
@@ -36,6 +40,7 @@ Output:
 
 ## Package matched sets
 - Double-click `RUN_PACKAGE.bat`
+  - Uses `%TRI_CAM_ROOT%` automatically if set.
 - Or run:
   - `python sync_pipeline.py package --root "E:\NOT UPLOADED"`
 
