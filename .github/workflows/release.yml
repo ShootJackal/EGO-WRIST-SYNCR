@@ -1,4 +1,4 @@
-name: Build Release ZIPs
+name: Build Release
 
 on:
   push:
@@ -9,23 +9,162 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build-windows:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Package Windows ZIP
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller
+          pip install -r windows/requirements.txt
+
+      - name: Build Windows executable
         run: |
           cd windows
-          zip -r ../TriCamSync-Windows.zip .
+          pyinstaller --onefile --name TriCamSync --add-data "licensing.py;." sync_pipeline.py
           cd ..
 
-      - name: Package macOS ZIP
+      - name: Assemble release folder
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-windows
+          Copy-Item windows/dist/TriCamSync.exe release-windows/
+          Copy-Item windows/LAUNCH.bat release-windows/
+          Copy-Item windows/ONE_CLICK_SETUP.bat release-windows/
+          Copy-Item windows/setup_windows.ps1 release-windows/
+          Copy-Item windows/RUN_MATCH.bat release-windows/
+          Copy-Item windows/RUN_PACKAGE.bat release-windows/
+          Copy-Item windows/requirements.txt release-windows/
+          Copy-Item windows/README.md release-windows/
+
+      - name: Update bat files for exe
+        shell: pwsh
+        run: |
+          $launch = @"
+          @echo off
+          setlocal
+          cd /d "%~dp0"
+          TriCamSync.exe launch
+          echo.
+          pause
+          "@
+          Set-Content -Path release-windows/LAUNCH.bat -Value $launch
+
+          $match = @"
+          @echo off
+          setlocal
+          cd /d "%~dp0"
+          TriCamSync.exe match
+          echo.
+          pause
+          "@
+          Set-Content -Path release-windows/RUN_MATCH.bat -Value $match
+
+          $pkg = @"
+          @echo off
+          setlocal
+          cd /d "%~dp0"
+          TriCamSync.exe package
+          echo.
+          pause
+          "@
+          Set-Content -Path release-windows/RUN_PACKAGE.bat -Value $pkg
+
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path release-windows/* -DestinationPath TriCamSync-Windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: TriCamSync-Windows.zip
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller
+          pip install -r macos/requirements.txt
+
+      - name: Build macOS executable
         run: |
           cd macos
-          chmod +x *.command setup_macos.sh
+          pyinstaller --onefile --name TriCamSync --add-data "licensing.py:." sync_pipeline.py
+          cd ..
+
+      - name: Assemble release folder
+        run: |
+          mkdir -p release-macos
+          cp macos/dist/TriCamSync release-macos/
+          cp macos/ONE_CLICK_SETUP.command release-macos/
+          cp macos/setup_macos.sh release-macos/
+          cp macos/requirements.txt release-macos/
+          cp macos/README.md release-macos/
+          chmod +x release-macos/TriCamSync
+
+      - name: Create launcher scripts for exe
+        run: |
+          cat > release-macos/LAUNCH.command << 'EOF'
+          #!/usr/bin/env bash
+          cd "$(dirname "$0")"
+          ./TriCamSync launch
+          echo ""
+          read -rp "Press Enter to close..."
+          EOF
+
+          cat > release-macos/RUN_MATCH.command << 'EOF'
+          #!/usr/bin/env bash
+          cd "$(dirname "$0")"
+          ./TriCamSync match
+          echo ""
+          read -rp "Press Enter to close..."
+          EOF
+
+          cat > release-macos/RUN_PACKAGE.command << 'EOF'
+          #!/usr/bin/env bash
+          cd "$(dirname "$0")"
+          ./TriCamSync package
+          echo ""
+          read -rp "Press Enter to close..."
+          EOF
+
+          chmod +x release-macos/*.command release-macos/setup_macos.sh
+
+      - name: Create ZIP
+        run: |
+          cd release-macos
           zip -r ../TriCamSync-macOS.zip .
           cd ..
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-zip
+          path: TriCamSync-macOS.zip
+
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-zip
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

@@ -10,38 +10,24 @@ On first run you will be asked for a license key.
 - **Community (free):** `EWS-COMMUNITY-FREE-2025`
 - **Pro:** purchase at <your-store-url>
 
-The key is saved locally (`.tricamsync_license`) so you only enter it once.
-
-## SSD auto-detection
-
-The scripts scan every **external** (non-system) drive for a folder named
-**`NOT UPLOADED`** containing **`HEAD`**, **`LEFT`**, and **`RIGHT`** sub-folders.
-The system drive (usually C:\) is skipped.
-
-If no external drive with the expected layout is found, you will be prompted
-to enter a **drive letter** (e.g. `E`) or a **full folder path**
-(e.g. `E:\NOT UPLOADED`).
-
-You can also override auto-detection:
-- Pass an explicit `--root` argument, **or**
-- Set the `TRI_CAM_ROOT` environment variable
-  (`setx TRI_CAM_ROOT "E:\NOT UPLOADED"`).
+The key is saved locally so you only enter it once.
 
 ## First-time setup
 
-1. Put this folder anywhere (Desktop, Documents, etc.).
-2. Double-click **`ONE_CLICK_SETUP.bat`**.
-3. Wait for Python, FFmpeg and pip packages to install.
-4. Drop your videos into the `HEAD`, `LEFT`, `RIGHT` folders on your SSD.
+1. Unzip this folder anywhere (Desktop, Documents, etc.).
+2. Double-click **`ONE_CLICK_SETUP.bat`** to install FFmpeg.
+3. Plug in your SSD with videos in `NOT UPLOADED\HEAD`, `LEFT`, `RIGHT`.
+4. Double-click **`LAUNCH.bat`**.
 
-## Run (recommended)
+## Usage
 
-- Double-click **`LAUNCH.bat`** for the interactive menu.
+Double-click **`LAUNCH.bat`** — the interactive menu will guide you:
 
-The launcher lets you:
-- **Full scan + match + package** — does everything in one go
-- **Package only** — if you already have a `matched_triplets.csv`
-- **Re-scan only** — regenerate the CSV
+1. **Full scan + match + package** — does everything in one go
+2. **Package only** — if you already have a `matched_sets.txt`
+3. **Re-scan only** — regenerate the match file
+4. **Resume packaging** — continue an interrupted copy/transfer
+0. **Exit**
 
 ### Packaging modes
 
@@ -49,16 +35,26 @@ The launcher lets you:
 |------|-------------|
 | **Copy** | Duplicates matched files into `UPLOAD_READY` on the same SSD |
 | **Move / reorganize** | Moves files into `UPLOAD_READY` (saves disk space) |
-| **Transfer** | Copies files + CSV to a different SSD/drive |
+| **Transfer** | Copies files + match file to a different SSD/drive |
 
-## Legacy scripts
+Disk space is checked before copy/transfer.  If interrupted (SSD
+unplugged, power loss), just re-run and choose **Resume packaging**.
 
-These still work for backwards compatibility:
+## SSD auto-detection
 
-- **`RUN_MATCH.bat`** — runs audio scan only
-- **`RUN_PACKAGE.bat`** — copies matched files (copy mode)
-- `python match_3cams.py`
-- `python sync_pipeline.py match`
+Scans every **external** (non-system) drive for a folder named
+**`NOT UPLOADED`** containing **`HEAD`**, **`LEFT`**, and **`RIGHT`**.
+The system drive (usually C:\) is skipped.
+
+If nothing is found, you'll be prompted for a drive letter or path.
+
+Override with `TRI_CAM_ROOT` environment variable:
+`setx TRI_CAM_ROOT "E:\NOT UPLOADED"`
+
+## Output
+
+Results are written to `matched_sets.txt` — a plain text file with full
+file paths you can copy-paste directly into File Explorer.
 
 ## Expected folder layout
 
@@ -72,6 +68,5 @@ These still work for backwards compatibility:
 ## Requirements
 
 - Windows 10/11
-- Python 3.10+
 - FFmpeg (`ffmpeg` and `ffprobe` in PATH)
-- NumPy (installed automatically by the setup script)
+  (installed automatically by the setup script)
