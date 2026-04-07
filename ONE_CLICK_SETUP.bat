@@ -7,7 +7,7 @@ echo ==================================================
 echo TRI-CAM SYNC ONE-CLICK SETUP
 echo ==================================================
 echo This installs Python, FFmpeg, Python packages,
-echo and creates D:\NOT UPLOADED\HEAD LEFT RIGHT
+echo and creates NOT UPLOADED\HEAD LEFT RIGHT on your SSD.
 echo.
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0setup_windows.ps1"

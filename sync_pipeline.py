@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Tri-cam matching + packaging pipeline.
 
-Defaults are wired for:
-- D:\\NOT UPLOADED\\HEAD
-- D:\\NOT UPLOADED\\LEFT
-- D:\\NOT UPLOADED\\RIGHT
+Auto-detection scans attached SSDs for a folder named ``NOT UPLOADED``
+containing ``HEAD``, ``LEFT``, and ``RIGHT`` sub-folders.
+
+Windows:  checks every drive letter  (D:/, E:/, F:/, ...)
+macOS:    checks /Volumes/<name>/NOT UPLOADED/...
 
 Commands:
   match   -> create matched_triplets.csv
@@ -16,7 +17,10 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
+import platform
 import shutil
+import string
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -34,6 +38,84 @@ SAMPLE_SECONDS = 20
 HOP_MS = 100
 MAX_SHIFT_SEC = 25
 MIN_AUDIO_SCORE = 0.18
+
+
+def _find_camera_dirs(root: Path) -> dict[str, Path] | None:
+    """Return HEAD/LEFT/RIGHT directories under *root* (case-insensitive)."""
+    if not root.exists() or not root.is_dir():
+        return None
+
+    found: dict[str, Path] = {}
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        key = child.name.strip().upper()
+        if key in {"HEAD", "LEFT", "RIGHT"}:
+            found[key] = child
+
+    if {"HEAD", "LEFT", "RIGHT"}.issubset(found):
+        return found
+    return None
+
+
+def resolve_root(root_arg: str | None = None) -> Path:
+    """Resolve project root across any plugged-in SSD.
+
+    Priority:
+    1) explicit --root argument
+    2) TRI_CAM_ROOT environment variable
+    3) first attached SSD containing NOT UPLOADED/HEAD, LEFT, RIGHT
+    4) platform-specific fallback (D:/NOT UPLOADED on Windows,
+       ~/NOT UPLOADED on macOS/Linux)
+    """
+    if root_arg:
+        return Path(root_arg).expanduser()
+
+    env_root = os.environ.get("TRI_CAM_ROOT", "").strip()
+    if env_root:
+        return Path(env_root).expanduser()
+
+    system = platform.system()
+
+    if system == "Windows" or os.name == "nt":
+        candidates: list[Path] = []
+        for drive in string.ascii_uppercase:
+            drive_root = Path(f"{drive}:/")
+            if not drive_root.exists():
+                continue
+            candidate = drive_root / "NOT UPLOADED"
+            if _find_camera_dirs(candidate):
+                candidates.append(candidate)
+        if candidates:
+            return sorted(candidates, key=lambda p: str(p).lower())[0]
+        return Path(r"D:\NOT UPLOADED")
+
+    if system == "Darwin":
+        volumes = Path("/Volumes")
+        if volumes.exists():
+            candidates = []
+            for vol in sorted(volumes.iterdir()):
+                if not vol.is_dir():
+                    continue
+                candidate = vol / "NOT UPLOADED"
+                if _find_camera_dirs(candidate):
+                    candidates.append(candidate)
+            if candidates:
+                return candidates[0]
+        return Path.home() / "NOT UPLOADED"
+
+    # Linux / other
+    mnt_dirs = [Path("/mnt"), Path("/media"), Path(f"/media/{os.getenv('USER', '')}")]
+    for mnt in mnt_dirs:
+        if not mnt.exists():
+            continue
+        for vol in sorted(mnt.iterdir()):
+            if not vol.is_dir():
+                continue
+            candidate = vol / "NOT UPLOADED"
+            if _find_camera_dirs(candidate):
+                return candidate
+    return Path.home() / "NOT UPLOADED"
 
 
 def run_cmd(cmd: list[str]) -> bytes:
@@ -300,13 +382,15 @@ def greedy_match(anchor_files: list[dict], other_files: list[dict]) -> dict[int,
 
 
 def run_match(root: Path) -> Path:
-    head_dir = root / "HEAD"
-    left_dir = root / "LEFT"
-    right_dir = root / "RIGHT"
-
-    for folder in [head_dir, left_dir, right_dir]:
-        if not folder.exists():
-            raise FileNotFoundError(f"Missing folder: {folder}")
+    camera_dirs = _find_camera_dirs(root)
+    if not camera_dirs:
+        raise FileNotFoundError(
+            "Missing required folders under root. Expected NOT UPLOADED/HEAD, LEFT, RIGHT. "
+            f"Resolved root: {root}"
+        )
+    head_dir = camera_dirs["HEAD"]
+    left_dir = camera_dirs["LEFT"]
+    right_dir = camera_dirs["RIGHT"]
 
     print("Scanning folders...")
     head_files = scan_folder(head_dir, "HEAD")
@@ -417,6 +501,13 @@ def run_match(root: Path) -> Path:
 
 
 def run_package(root: Path, csv_path: Path | None = None) -> Path:
+    camera_dirs = _find_camera_dirs(root)
+    if not camera_dirs:
+        raise FileNotFoundError(
+            "Missing required folders under root. Expected NOT UPLOADED/HEAD, LEFT, RIGHT. "
+            f"Resolved root: {root}"
+        )
+
     csv_file = csv_path if csv_path else root / "matched_triplets.csv"
     if not csv_file.exists():
         raise FileNotFoundError(f"Missing CSV: {csv_file}. Run 'match' first.")
@@ -432,9 +523,9 @@ def run_package(root: Path, csv_path: Path | None = None) -> Path:
     for row in rows:
         set_id = row["set_id"]
         mappings = [
-            (root / "HEAD" / row["head_file"], "HEAD"),
-            (root / "LEFT" / row["left_file"], "LEFT"),
-            (root / "RIGHT" / row["right_file"], "RIGHT"),
+            (camera_dirs["HEAD"] / row["head_file"], "HEAD"),
+            (camera_dirs["LEFT"] / row["left_file"], "LEFT"),
+            (camera_dirs["RIGHT"] / row["right_file"], "RIGHT"),
         ]
 
         for src, cam in mappings:
@@ -454,10 +545,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     match_parser = subparsers.add_parser("match", help="Generate matched_triplets.csv")
-    match_parser.add_argument("--root", default=r"D:\NOT UPLOADED", help="Root folder containing HEAD/LEFT/RIGHT")
+    match_parser.add_argument("--root", default=None, help="Root folder containing HEAD/LEFT/RIGHT")
 
     package_parser = subparsers.add_parser("package", help="Copy matched clips into UPLOAD_READY")
-    package_parser.add_argument("--root", default=r"D:\NOT UPLOADED", help="Root folder containing HEAD/LEFT/RIGHT")
+    package_parser.add_argument("--root", default=None, help="Root folder containing HEAD/LEFT/RIGHT")
     package_parser.add_argument("--csv", default=None, help="Optional path to matched_triplets.csv")
 
     return parser
@@ -467,7 +558,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    root = Path(args.root)
+    root = resolve_root(args.root)
+    print(f"Using root: {root}")
 
     if args.command == "match":
         run_match(root)
