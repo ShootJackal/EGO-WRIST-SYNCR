@@ -8,11 +8,16 @@ Usage:
 
 from __future__ import annotations
 
-import sys
+import argparse
 
 from sync_pipeline import resolve_root, run_match
 
 
 if __name__ == "__main__":
-    root_arg = sys.argv[1] if len(sys.argv) > 1 else None
-    run_match(resolve_root(root_arg))
+    parser = argparse.ArgumentParser(description="Back-compatible 3-cam matcher entrypoint")
+    parser.add_argument("root", nargs="?", default=None, help="Optional root path, e.g. E:\\NOT UPLOADED")
+    parser.add_argument("--root", dest="root_flag", default=None, help="Optional root path override")
+    args = parser.parse_args()
+
+    chosen_root = args.root_flag if args.root_flag else args.root
+    run_match(resolve_root(chosen_root))

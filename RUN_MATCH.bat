@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 set ROOT_ARG=
 if not "%TRI_CAM_ROOT%"=="" (
-    set ROOT_ARG=%TRI_CAM_ROOT%
+    set ROOT_ARG="%TRI_CAM_ROOT%"
 )
 
 where py >nul 2>nul

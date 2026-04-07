@@ -23,8 +23,19 @@ function Resolve-ProjectRoot([string]$ProvidedRoot) {
         return $env:TRI_CAM_ROOT
     }
 
-    # Prefer any existing <Drive>:\NOT UPLOADED (works for external SSDs too)
+    # Prefer any existing <Drive>:\NOT UPLOADED with HEAD/LEFT/RIGHT.
     $drives = Get-PSDrive -PSProvider FileSystem | Sort-Object Name
+    foreach ($d in $drives) {
+        $candidate = Join-Path ($d.Name + ":\") "NOT UPLOADED"
+        $hasLayout = (Test-Path (Join-Path $candidate "HEAD")) -and `
+                     (Test-Path (Join-Path $candidate "LEFT")) -and `
+                     (Test-Path (Join-Path $candidate "RIGHT"))
+        if ($hasLayout) {
+            return $candidate
+        }
+    }
+
+    # Otherwise use the first existing NOT UPLOADED folder even if empty/partial.
     foreach ($d in $drives) {
         $candidate = Join-Path ($d.Name + ":\") "NOT UPLOADED"
         if (Test-Path $candidate) {

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Tri-cam matching + packaging pipeline.
 
-Defaults are wired for:
-- D:\\NOT UPLOADED\\HEAD
-- D:\\NOT UPLOADED\\LEFT
-- D:\\NOT UPLOADED\\RIGHT
+Auto-detection looks for:
+- <drive>:\\NOT UPLOADED\\HEAD
+- <drive>:\\NOT UPLOADED\\LEFT
+- <drive>:\\NOT UPLOADED\\RIGHT
 
 Commands:
   match   -> create matched_triplets.csv
@@ -84,6 +84,7 @@ def resolve_root(root_arg: str | None = None) -> Path:
         if candidates:
             return sorted(candidates, key=lambda p: str(p).lower())[0]
 
+    # Legacy fallback for older workflows.
     return Path(r"D:\NOT UPLOADED")
 
 

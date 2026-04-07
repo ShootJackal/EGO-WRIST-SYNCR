@@ -30,6 +30,7 @@ Override priority:
   - `python match_3cams.py`
 - Optional explicit root:
   - `python match_3cams.py "E:\NOT UPLOADED"`
+  - `python match_3cams.py --root "E:\NOT UPLOADED"`
 - Or helper button:
   - Double-click `RUN_MATCH.bat`
 - Or explicit CLI:
