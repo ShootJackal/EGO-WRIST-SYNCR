@@ -1,84 +1,65 @@
-# Tri-Cam Sync One-Click Setup
+# EGO-WRIST-SYNCR  --  Tri-Cam Sync
 
 Automatically matches HEAD, LEFT and RIGHT camera clips by audio
 fingerprinting and packages them into upload-ready sets.
 
+## Downloads
+
+Go to [**Releases**](../../releases) and download the ZIP for your platform:
+
+| Platform | Download | What's inside |
+|----------|----------|---------------|
+| **Windows** | `TriCamSync-Windows.zip` | `.bat` launchers, PowerShell setup, Python scripts |
+| **macOS** | `TriCamSync-macOS.zip` | `.command` launchers, Bash/Homebrew setup, Python scripts |
+
+Each ZIP is self-contained -- just unzip and double-click the setup script.
+
+## Quick start
+
+### Windows
+1. Download and unzip **TriCamSync-Windows.zip**.
+2. Double-click **`ONE_CLICK_SETUP.bat`** to install Python, FFmpeg and dependencies.
+3. Plug in your SSD containing `NOT UPLOADED\HEAD`, `LEFT`, `RIGHT`.
+4. Double-click **`RUN_MATCH.bat`** to match clips.
+5. Double-click **`RUN_PACKAGE.bat`** to copy matched sets into `UPLOAD_READY`.
+
+### macOS
+1. Download and unzip **TriCamSync-macOS.zip**.
+2. Double-click **`ONE_CLICK_SETUP.command`** to install Homebrew, Python, FFmpeg and dependencies.
+3. Plug in your SSD containing `NOT UPLOADED/HEAD`, `LEFT`, `RIGHT`.
+4. Double-click **`RUN_MATCH.command`** to match clips.
+5. Double-click **`RUN_PACKAGE.command`** to copy matched sets into `UPLOAD_READY`.
+
 ## SSD auto-detection
 
-The scripts scan every attached SSD for a folder named **`NOT UPLOADED`**
+Both versions scan attached drives/volumes for a folder named **`NOT UPLOADED`**
 containing **`HEAD`**, **`LEFT`**, and **`RIGHT`** sub-folders.
 
-| Platform | Scan locations |
-|----------|---------------|
-| Windows  | Every drive letter (`D:\`, `E:\`, `F:\`, ...) |
-| macOS    | `/Volumes/<name>/NOT UPLOADED/...` |
+- **Windows**: scans every drive letter (D:\, E:\, F:\, ...)
+- **macOS**: scans `/Volumes/`
 
-You can override the auto-detection at any time:
-- Pass an explicit `--root` argument, **or**
-- Set the `TRI_CAM_ROOT` environment variable.
+Override with `--root` or the `TRI_CAM_ROOT` environment variable.
 
----
-
-## Windows setup
-
-1. Put this folder anywhere (Desktop, Documents, etc.).
-2. Double-click **`ONE_CLICK_SETUP.bat`**.
-3. Wait for Python, FFmpeg and pip packages to install.
-4. Drop your videos into the `HEAD`, `LEFT`, `RIGHT` folders on your SSD.
-
-### Run matching (Windows)
-- Double-click **`RUN_MATCH.bat`**, or
-- `python match_3cams.py`, or
-- `python sync_pipeline.py match`
-
-### Package matched sets (Windows)
-- Double-click **`RUN_PACKAGE.bat`**, or
-- `python sync_pipeline.py package`
-
----
-
-## macOS setup
-
-1. Put this folder anywhere.
-2. Double-click **`ONE_CLICK_SETUP.command`** (or run `bash setup_macos.sh`).
-3. Wait for Homebrew, Python 3.12, FFmpeg and pip packages to install.
-4. Drop your videos into the `HEAD`, `LEFT`, `RIGHT` folders on your SSD.
-
-### Run matching (macOS)
-- Double-click **`RUN_MATCH.command`**, or
-- `python3 match_3cams.py`, or
-- `python3 sync_pipeline.py match`
-
-### Package matched sets (macOS)
-- Double-click **`RUN_PACKAGE.command`**, or
-- `python3 sync_pipeline.py package`
-
----
-
-## Expected folder layout
+## Repository layout
 
 ```
-<SSD>/NOT UPLOADED/
-  HEAD/   ← head-cam clips
-  LEFT/   ← left-cam clips
-  RIGHT/  ← right-cam clips
+windows/          <- Windows release files
+  ONE_CLICK_SETUP.bat
+  RUN_MATCH.bat
+  RUN_PACKAGE.bat
+  setup_windows.ps1
+  sync_pipeline.py
+  match_3cams.py
+  requirements.txt
+  README.md
+
+macos/            <- macOS release files
+  ONE_CLICK_SETUP.command
+  RUN_MATCH.command
+  RUN_PACKAGE.command
+  setup_macos.sh
+  sync_pipeline.py
+  match_3cams.py
+  requirements.txt
+  README.md
 ```
-
-## Output
-
-**`matched_triplets.csv`** is written inside the `NOT UPLOADED` folder.
-
-Packaging copies files into:
-```
-NOT UPLOADED/UPLOAD_READY/
-  SET_001_HEAD.mov
-  SET_001_LEFT.mov
-  SET_001_RIGHT.mov
-  ...
-```
-
-## Requirements
-
-- Python 3.10+
-- FFmpeg (`ffmpeg` and `ffprobe` in PATH)
-- NumPy (installed automatically by the setup scripts)

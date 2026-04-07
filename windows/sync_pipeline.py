@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""Tri-cam matching + packaging pipeline.
+"""Tri-cam matching + packaging pipeline  (Windows).
 
-Auto-detection scans attached SSDs for a folder named ``NOT UPLOADED``
-containing ``HEAD``, ``LEFT``, and ``RIGHT`` sub-folders.
-
-Windows:  checks every drive letter  (D:/, E:/, F:/, ...)
-macOS:    checks /Volumes/<name>/NOT UPLOADED/...
+Auto-detection scans every drive letter for a folder named
+``NOT UPLOADED`` containing ``HEAD``, ``LEFT``, and ``RIGHT``.
 
 Commands:
   match   -> create matched_triplets.csv
@@ -18,7 +15,6 @@ import argparse
 import csv
 import json
 import os
-import platform
 import shutil
 import string
 import subprocess
@@ -59,14 +55,13 @@ def _find_camera_dirs(root: Path) -> dict[str, Path] | None:
 
 
 def resolve_root(root_arg: str | None = None) -> Path:
-    """Resolve project root across any plugged-in SSD.
+    """Resolve project root across any plugged-in SSD on Windows.
 
     Priority:
     1) explicit --root argument
     2) TRI_CAM_ROOT environment variable
-    3) first attached SSD containing NOT UPLOADED/HEAD, LEFT, RIGHT
-    4) platform-specific fallback (D:/NOT UPLOADED on Windows,
-       ~/NOT UPLOADED on macOS/Linux)
+    3) first drive containing NOT UPLOADED/HEAD, LEFT, RIGHT
+    4) D:/NOT UPLOADED fallback
     """
     if root_arg:
         return Path(root_arg).expanduser()
@@ -75,47 +70,18 @@ def resolve_root(root_arg: str | None = None) -> Path:
     if env_root:
         return Path(env_root).expanduser()
 
-    system = platform.system()
-
-    if system == "Windows" or os.name == "nt":
-        candidates: list[Path] = []
-        for drive in string.ascii_uppercase:
-            drive_root = Path(f"{drive}:/")
-            if not drive_root.exists():
-                continue
-            candidate = drive_root / "NOT UPLOADED"
-            if _find_camera_dirs(candidate):
-                candidates.append(candidate)
-        if candidates:
-            return sorted(candidates, key=lambda p: str(p).lower())[0]
-        return Path(r"D:\NOT UPLOADED")
-
-    if system == "Darwin":
-        volumes = Path("/Volumes")
-        if volumes.exists():
-            candidates = []
-            for vol in sorted(volumes.iterdir()):
-                if not vol.is_dir():
-                    continue
-                candidate = vol / "NOT UPLOADED"
-                if _find_camera_dirs(candidate):
-                    candidates.append(candidate)
-            if candidates:
-                return candidates[0]
-        return Path.home() / "NOT UPLOADED"
-
-    # Linux / other
-    mnt_dirs = [Path("/mnt"), Path("/media"), Path(f"/media/{os.getenv('USER', '')}")]
-    for mnt in mnt_dirs:
-        if not mnt.exists():
+    candidates: list[Path] = []
+    for drive in string.ascii_uppercase:
+        drive_root = Path(f"{drive}:/")
+        if not drive_root.exists():
             continue
-        for vol in sorted(mnt.iterdir()):
-            if not vol.is_dir():
-                continue
-            candidate = vol / "NOT UPLOADED"
-            if _find_camera_dirs(candidate):
-                return candidate
-    return Path.home() / "NOT UPLOADED"
+        candidate = drive_root / "NOT UPLOADED"
+        if _find_camera_dirs(candidate):
+            candidates.append(candidate)
+    if candidates:
+        return sorted(candidates, key=lambda p: str(p).lower())[0]
+
+    return Path(r"D:\NOT UPLOADED")
 
 
 def run_cmd(cmd: list[str]) -> bytes:
@@ -541,7 +507,7 @@ def run_package(root: Path, csv_path: Path | None = None) -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Tri-cam sync pipeline")
+    parser = argparse.ArgumentParser(description="Tri-cam sync pipeline (Windows)")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     match_parser = subparsers.add_parser("match", help="Generate matched_triplets.csv")
