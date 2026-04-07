@@ -1,0 +1,116 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r windows/requirements.txt
+          pip install pyinstaller
+
+      - name: Build Windows executable
+        run: |
+          cd windows
+          pyinstaller --onefile --name TriCamSync --add-data "license_check.py;." sync_pipeline.py
+
+      - name: Package Windows ZIP
+        run: |
+          mkdir release-win
+          copy windows\dist\TriCamSync.exe release-win\
+          copy windows\RUN_MATCH.bat release-win\
+          copy windows\RUN_PACKAGE.bat release-win\
+          copy windows\INSTALL_FFMPEG.bat release-win\
+          copy windows\README.md release-win\
+          copy LICENSE release-win\
+          Compress-Archive -Path release-win\* -DestinationPath TriCamSync-Windows.zip
+        shell: pwsh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: TriCamSync-Windows.zip
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r macos/requirements.txt
+          pip install pyinstaller
+
+      - name: Build macOS executable
+        run: |
+          cd macos
+          pyinstaller --onefile --name TriCamSync --add-data "license_check.py:." sync_pipeline.py
+
+      - name: Package macOS ZIP
+        run: |
+          mkdir release-mac
+          cp macos/dist/TriCamSync release-mac/
+          cp macos/RUN_MATCH.command release-mac/
+          cp macos/RUN_PACKAGE.command release-mac/
+          cp macos/INSTALL_FFMPEG.command release-mac/
+          cp macos/README.md release-mac/
+          cp LICENSE release-mac/
+          chmod +x release-mac/TriCamSync release-mac/*.command
+          cd release-mac && zip -r ../TriCamSync-macOS.zip .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-zip
+          path: TriCamSync-macOS.zip
+
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-zip
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            TriCamSync-Windows.zip
+            TriCamSync-macOS.zip
+          generate_release_notes: false
+          body: |
+            ## TriCamSync
+
+            Multi-camera audio sync for photographers and videographers.
+            Automatically matches clips from HEAD, LEFT and RIGHT cameras.
+
+            **Download the ZIP for your platform, unzip, place your license.key file inside, and double-click RUN_MATCH.**
+
+            | Platform | File |
+            |----------|------|
+            | Windows  | `TriCamSync-Windows.zip` |
+            | macOS    | `TriCamSync-macOS.zip` |
