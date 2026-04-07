@@ -1,0 +1,36 @@
+name: Build Release ZIPs
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package Windows ZIP
+        run: |
+          cd windows
+          zip -r ../TriCamSync-Windows.zip .
+          cd ..
+
+      - name: Package macOS ZIP
+        run: |
+          cd macos
+          chmod +x *.command setup_macos.sh
+          zip -r ../TriCamSync-macOS.zip .
+          cd ..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            TriCamSync-Windows.zip
+            TriCamSync-macOS.zip
+          generate_release_notes: true
