@@ -43,10 +43,23 @@ The key is saved locally so you only enter it once.
 
 The new **LAUNCH** script gives you a single interactive menu:
 
-1. **Full scan + match + package** — scans all cameras, writes `matched_triplets.csv`, then packages files.
-2. **Package only** (when CSV already exists) — skip scanning, go straight to packaging.
-3. **Re-scan / scan only** — regenerate the CSV without packaging.
+1. **Full scan + match + package** — scans all cameras, writes `matched_sets.txt`, then packages files.
+2. **Package only** (when match file exists) — skip scanning, go straight to packaging.
+3. **Re-scan / scan only** — regenerate the match file without packaging.
+4. **Resume packaging** — continue an interrupted copy/transfer.
 0. **Exit**
+
+### Match output
+
+Results are written to `matched_sets.txt` — a human-readable text file with full
+file paths you can copy-paste directly into File Explorer / Finder.
+
+### Matching quality
+
+The audio fingerprint engine uses multi-point consensus matching and three-way
+cross-validation (HEAD-LEFT, HEAD-RIGHT, **and** LEFT-RIGHT must all agree).
+Confidence levels (HIGH / MEDIUM / LOW / REVIEW) are based on how many sample
+points agree across all three camera pairs.
 
 ### Packaging modes
 
@@ -56,7 +69,14 @@ When packaging, you choose one of three modes:
 |------|-------------|
 | **Copy** | Duplicates matched files into `UPLOAD_READY` on the same SSD |
 | **Move / reorganize** | Moves files into `UPLOAD_READY` (saves disk space, originals are relocated) |
-| **Transfer** | Copies files + CSV to a different SSD/drive |
+| **Transfer** | Copies files + match file to a different SSD/drive |
+
+Disk space is checked before copy/transfer.  If there isn't enough room
+you can switch to move mode or plug in a bigger drive.
+
+If the SSD disconnects or the process crashes mid-copy, progress is saved
+automatically.  Just re-run and choose **Resume packaging** to pick up
+where it left off.
 
 ## SSD auto-detection
 
