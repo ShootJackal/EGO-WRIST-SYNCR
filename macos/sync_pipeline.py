@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Tri-cam matching + packaging pipeline  (macOS).
 
-Auto-detection scans /Volumes/ for a folder named ``NOT UPLOADED``
-containing ``HEAD``, ``LEFT``, and ``RIGHT``.
+Auto-detection scans external volumes under /Volumes/ for a folder named
+``NOT UPLOADED`` containing ``HEAD``, ``LEFT``, and ``RIGHT``.
+Internal volumes (Macintosh HD) are skipped.
+If none is found, prompts for a volume name or folder path.
 
 Commands:
   match   -> create matched_triplets.csv
@@ -53,14 +55,93 @@ def _find_camera_dirs(root: Path) -> dict[str, Path] | None:
     return None
 
 
+def _is_internal_volume(vol: Path) -> bool:
+    """Heuristic: treat the boot volume (Macintosh HD) as internal."""
+    name = vol.name
+    if name == "Macintosh HD" or name.startswith("Macintosh HD"):
+        return True
+    try:
+        if vol.resolve() == Path("/").resolve():
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def _get_external_volumes() -> list[Path]:
+    """Return non-system volumes under /Volumes."""
+    volumes = Path("/Volumes")
+    if not volumes.exists():
+        return []
+    external: list[Path] = []
+    for vol in sorted(volumes.iterdir()):
+        if not vol.is_dir():
+            continue
+        if _is_internal_volume(vol):
+            continue
+        external.append(vol)
+    return external
+
+
+def _prompt_for_root() -> Path:
+    """Interactively ask the user for a volume name or folder path."""
+    print("\n" + "=" * 60)
+    print("  No external drive with 'NOT UPLOADED/HEAD/LEFT/RIGHT'")
+    print("  was found automatically.")
+    print("=" * 60)
+    print("\nPlease enter a volume name or full path to the")
+    print("'NOT UPLOADED' folder.")
+    print()
+    print("  Examples:")
+    print("    MySSD")
+    print("    /Volumes/MySSD/NOT UPLOADED")
+    print("    ~/Desktop/NOT UPLOADED")
+    print()
+
+    while True:
+        try:
+            response = input("Volume name or path: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raise SystemExit(1)
+
+        if not response:
+            continue
+
+        if response.startswith("/") or response.startswith("~"):
+            candidate = Path(response).expanduser()
+        else:
+            candidate = Path("/Volumes") / response / "NOT UPLOADED"
+
+        if candidate.exists():
+            if _find_camera_dirs(candidate):
+                print(f"  Found HEAD/LEFT/RIGHT in: {candidate}")
+            else:
+                print(f"  Warning: '{candidate}' exists but is missing HEAD/LEFT/RIGHT sub-folders.")
+            return candidate
+
+        vol_path = Path("/Volumes") / response
+        if vol_path.exists():
+            print(f"  Volume '{response}' exists but has no 'NOT UPLOADED' folder.")
+            print(f"  Would you like to use '{candidate}' anyway? (y/n): ", end="")
+            try:
+                confirm = input().strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                raise SystemExit(1)
+            if confirm in ("y", "yes"):
+                return candidate
+            continue
+
+        print(f"  Path '{candidate}' does not exist. Please try again.")
+
+
 def resolve_root(root_arg: str | None = None) -> Path:
-    """Resolve project root across any plugged-in SSD on macOS.
+    """Resolve project root across any plugged-in external SSD on macOS.
 
     Priority:
     1) explicit --root argument
     2) TRI_CAM_ROOT environment variable
-    3) first volume under /Volumes containing NOT UPLOADED/HEAD, LEFT, RIGHT
-    4) ~/NOT UPLOADED fallback
+    3) first external volume under /Volumes containing NOT UPLOADED/HEAD, LEFT, RIGHT
+    4) interactive prompt for volume name or folder path
     """
     if root_arg:
         return Path(root_arg).expanduser()
@@ -69,19 +150,24 @@ def resolve_root(root_arg: str | None = None) -> Path:
     if env_root:
         return Path(env_root).expanduser()
 
-    volumes = Path("/Volumes")
-    if volumes.exists():
-        candidates: list[Path] = []
-        for vol in sorted(volumes.iterdir()):
-            if not vol.is_dir():
-                continue
-            candidate = vol / "NOT UPLOADED"
-            if _find_camera_dirs(candidate):
-                candidates.append(candidate)
-        if candidates:
-            return candidates[0]
+    external_vols = _get_external_volumes()
+    candidates: list[Path] = []
+    for vol in external_vols:
+        candidate = vol / "NOT UPLOADED"
+        if _find_camera_dirs(candidate):
+            candidates.append(candidate)
 
-    return Path.home() / "NOT UPLOADED"
+    if candidates:
+        if len(candidates) == 1:
+            return candidates[0]
+        print(f"\nFound {len(candidates)} external volumes with 'NOT UPLOADED':")
+        for i, c in enumerate(candidates, 1):
+            print(f"  {i}) {c}")
+        print(f"\nUsing: {candidates[0]}")
+        print("Tip: use --root to pick a different one.")
+        return candidates[0]
+
+    return _prompt_for_root()
 
 
 def run_cmd(cmd: list[str]) -> bytes:

@@ -14,6 +14,63 @@ function Test-CommandExists($name) {
     return [bool](Get-Command $name -ErrorAction SilentlyContinue)
 }
 
+function Get-SystemDriveLetter {
+    $sd = $env:SystemDrive
+    if ($sd) { return $sd.Substring(0,1).ToUpper() }
+    return "C"
+}
+
+function Get-ExternalDrives {
+    $sysLetter = Get-SystemDriveLetter
+    return Get-PSDrive -PSProvider FileSystem |
+        Where-Object { $_.Name.ToUpper() -ne $sysLetter } |
+        Sort-Object Name
+}
+
+function Prompt-ForRoot {
+    Write-Host ""
+    Write-Host ("=" * 60) -ForegroundColor Yellow
+    Write-Host "  No external drive with 'NOT UPLOADED\HEAD\LEFT\RIGHT'" -ForegroundColor Yellow
+    Write-Host "  was found automatically." -ForegroundColor Yellow
+    Write-Host ("=" * 60) -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Please enter a drive letter or full path to the"
+    Write-Host "'NOT UPLOADED' folder."
+    Write-Host ""
+    Write-Host "  Examples:"
+    Write-Host "    E"
+    Write-Host "    E:\NOT UPLOADED"
+    Write-Host "    F:\MyProject\NOT UPLOADED"
+    Write-Host ""
+
+    while ($true) {
+        $response = Read-Host "Drive letter or path"
+        if (-not $response -or $response.Trim().Length -eq 0) { continue }
+        $response = $response.Trim()
+
+        if ($response.Length -eq 1 -and $response -match '^[A-Za-z]$') {
+            $candidate = Join-Path ($response.ToUpper() + ":\") "NOT UPLOADED"
+        } elseif ($response.Length -eq 2 -and $response -match '^[A-Za-z]:$') {
+            $candidate = Join-Path ($response.Substring(0,1).ToUpper() + ":\") "NOT UPLOADED"
+        } else {
+            $candidate = $response
+        }
+
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+
+        $drivePart = Split-Path -Qualifier $candidate -ErrorAction SilentlyContinue
+        if ($drivePart -and (Test-Path ($drivePart + "\"))) {
+            Write-Host "  Path '$candidate' does not exist yet."
+            $confirm = Read-Host "  Create and use it anyway? (y/n)"
+            if ($confirm -match '^[Yy]') { return $candidate }
+        } else {
+            Write-Host "  Drive or path '$candidate' does not exist. Please try again." -ForegroundColor Red
+        }
+    }
+}
+
 function Resolve-ProjectRoot([string]$ProvidedRoot) {
     if ($ProvidedRoot -and $ProvidedRoot.Trim().Length -gt 0) {
         return $ProvidedRoot
@@ -23,8 +80,8 @@ function Resolve-ProjectRoot([string]$ProvidedRoot) {
         return $env:TRI_CAM_ROOT
     }
 
-    $drives = Get-PSDrive -PSProvider FileSystem | Sort-Object Name
-    foreach ($d in $drives) {
+    $externalDrives = Get-ExternalDrives
+    foreach ($d in $externalDrives) {
         $candidate = Join-Path ($d.Name + ":\") "NOT UPLOADED"
         $hasLayout = (Test-Path (Join-Path $candidate "HEAD")) -and `
                      (Test-Path (Join-Path $candidate "LEFT")) -and `
@@ -34,23 +91,14 @@ function Resolve-ProjectRoot([string]$ProvidedRoot) {
         }
     }
 
-    foreach ($d in $drives) {
+    foreach ($d in $externalDrives) {
         $candidate = Join-Path ($d.Name + ":\") "NOT UPLOADED"
         if (Test-Path $candidate) {
             return $candidate
         }
     }
 
-    $nonSystem = $drives | Where-Object { $_.Name -ne "C" } | Select-Object -First 1
-    if ($nonSystem) {
-        return (Join-Path ($nonSystem.Name + ":\") "NOT UPLOADED")
-    }
-
-    if (Test-Path "D:\") {
-        return "D:\NOT UPLOADED"
-    }
-
-    return "C:\NOT UPLOADED"
+    return Prompt-ForRoot
 }
 
 Write-Step "Checking winget"

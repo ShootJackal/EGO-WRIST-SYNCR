@@ -5,10 +5,15 @@ fingerprinting and packages them into upload-ready sets.
 
 ## SSD auto-detection
 
-The scripts scan `/Volumes/` for any attached SSD containing a folder named
-**`NOT UPLOADED`** with **`HEAD`**, **`LEFT`**, and **`RIGHT`** sub-folders.
+The scripts scan **external** volumes under `/Volumes/` for any attached SSD
+containing a folder named **`NOT UPLOADED`** with **`HEAD`**, **`LEFT`**, and
+**`RIGHT`** sub-folders. Internal volumes (Macintosh HD) are skipped.
 
-You can override auto-detection:
+If no external volume with the expected layout is found, you will be prompted
+to enter a **volume name** (e.g. `MySSD`) or a **full folder path**
+(e.g. `/Volumes/MySSD/NOT UPLOADED`).
+
+You can also override auto-detection:
 - Pass an explicit `--root` argument, **or**
 - Set the `TRI_CAM_ROOT` environment variable
   (`export TRI_CAM_ROOT="/Volumes/MySSD/NOT UPLOADED"`).

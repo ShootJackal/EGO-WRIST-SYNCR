@@ -5,10 +5,15 @@ fingerprinting and packages them into upload-ready sets.
 
 ## SSD auto-detection
 
-The scripts scan every attached drive for a folder named **`NOT UPLOADED`**
-containing **`HEAD`**, **`LEFT`**, and **`RIGHT`** sub-folders.
+The scripts scan every **external** (non-system) drive for a folder named
+**`NOT UPLOADED`** containing **`HEAD`**, **`LEFT`**, and **`RIGHT`** sub-folders.
+The system drive (usually C:\) is skipped.
 
-You can override auto-detection:
+If no external drive with the expected layout is found, you will be prompted
+to enter a **drive letter** (e.g. `E`) or a **full folder path**
+(e.g. `E:\NOT UPLOADED`).
+
+You can also override auto-detection:
 - Pass an explicit `--root` argument, **or**
 - Set the `TRI_CAM_ROOT` environment variable
   (`setx TRI_CAM_ROOT "E:\NOT UPLOADED"`).
