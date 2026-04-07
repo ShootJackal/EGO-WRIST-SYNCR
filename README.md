@@ -1,7 +1,7 @@
 # Tri-Cam Sync One-Click Setup
 
 ## Works with any SSD you plug in
-The matcher auto-finds the first drive that contains all three folders:
+The matcher auto-finds the first drive that contains this exact structure:
 - `\NOT UPLOADED\HEAD`
 - `\NOT UPLOADED\LEFT`
 - `\NOT UPLOADED\RIGHT`
@@ -10,7 +10,7 @@ Override priority:
 1. CLI `--root "E:\NOT UPLOADED"`
 2. Env var `TRI_CAM_ROOT=E:\NOT UPLOADED`
 3. Auto-detect drives
-4. Fallback `D:\NOT UPLOADED`
+4. Fallback `D:\NOT UPLOADED` (only if no drive has the required folders yet)
 
 ## Folder layout (exact)
 - `X:\NOT UPLOADED\HEAD`
@@ -33,7 +33,6 @@ Override priority:
 - Or helper button:
   - Double-click `RUN_MATCH.bat`
 - Or explicit CLI:
-  - `python sync_pipeline.py match --root "D:\NOT UPLOADED"`
   - `python sync_pipeline.py match --root "E:\NOT UPLOADED"`
 
 This writes:
@@ -43,7 +42,6 @@ This writes:
 - Double-click `RUN_PACKAGE.bat`
   - Uses `%TRI_CAM_ROOT%` automatically if set.
 - Or run:
-  - `python sync_pipeline.py package --root "D:\NOT UPLOADED"`
   - `python sync_pipeline.py package --root "E:\NOT UPLOADED"`
 
 This writes files like:

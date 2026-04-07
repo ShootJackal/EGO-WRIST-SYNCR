@@ -38,6 +38,24 @@ MAX_SHIFT_SEC = 25
 MIN_AUDIO_SCORE = 0.18
 
 
+def _find_camera_dirs(root: Path) -> dict[str, Path] | None:
+    """Return HEAD/LEFT/RIGHT directories under root (case-insensitive)."""
+    if not root.exists() or not root.is_dir():
+        return None
+
+    found: dict[str, Path] = {}
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        key = child.name.strip().upper()
+        if key in {"HEAD", "LEFT", "RIGHT"}:
+            found[key] = child
+
+    if {"HEAD", "LEFT", "RIGHT"}.issubset(found):
+        return found
+    return None
+
+
 def resolve_root(root_arg: str | None = None) -> Path:
     """Resolve project root across any plugged-in SSD.
 
@@ -48,17 +66,20 @@ def resolve_root(root_arg: str | None = None) -> Path:
     4) D:/NOT UPLOADED fallback
     """
     if root_arg:
-        return Path(root_arg)
+        return Path(root_arg).expanduser()
 
     env_root = os.environ.get("TRI_CAM_ROOT", "").strip()
     if env_root:
-        return Path(env_root)
+        return Path(env_root).expanduser()
 
     if os.name == "nt":
-        candidates = []
+        candidates: list[Path] = []
         for drive in string.ascii_uppercase:
-            candidate = Path(f"{drive}:/NOT UPLOADED")
-            if (candidate / "HEAD").exists() and (candidate / "LEFT").exists() and (candidate / "RIGHT").exists():
+            drive_root = Path(f"{drive}:/")
+            if not drive_root.exists():
+                continue
+            candidate = drive_root / "NOT UPLOADED"
+            if _find_camera_dirs(candidate):
                 candidates.append(candidate)
         if candidates:
             return sorted(candidates, key=lambda p: str(p).lower())[0]
@@ -330,13 +351,15 @@ def greedy_match(anchor_files: list[dict], other_files: list[dict]) -> dict[int,
 
 
 def run_match(root: Path) -> Path:
-    head_dir = root / "HEAD"
-    left_dir = root / "LEFT"
-    right_dir = root / "RIGHT"
-
-    for folder in [head_dir, left_dir, right_dir]:
-        if not folder.exists():
-            raise FileNotFoundError(f"Missing folder: {folder}")
+    camera_dirs = _find_camera_dirs(root)
+    if not camera_dirs:
+        raise FileNotFoundError(
+            "Missing required folders under root. Expected NOT UPLOADED/HEAD, LEFT, RIGHT. "
+            f"Resolved root: {root}"
+        )
+    head_dir = camera_dirs["HEAD"]
+    left_dir = camera_dirs["LEFT"]
+    right_dir = camera_dirs["RIGHT"]
 
     print("Scanning folders...")
     head_files = scan_folder(head_dir, "HEAD")
@@ -447,6 +470,13 @@ def run_match(root: Path) -> Path:
 
 
 def run_package(root: Path, csv_path: Path | None = None) -> Path:
+    camera_dirs = _find_camera_dirs(root)
+    if not camera_dirs:
+        raise FileNotFoundError(
+            "Missing required folders under root. Expected NOT UPLOADED/HEAD, LEFT, RIGHT. "
+            f"Resolved root: {root}"
+        )
+
     csv_file = csv_path if csv_path else root / "matched_triplets.csv"
     if not csv_file.exists():
         raise FileNotFoundError(f"Missing CSV: {csv_file}. Run 'match' first.")
@@ -462,9 +492,9 @@ def run_package(root: Path, csv_path: Path | None = None) -> Path:
     for row in rows:
         set_id = row["set_id"]
         mappings = [
-            (root / "HEAD" / row["head_file"], "HEAD"),
-            (root / "LEFT" / row["left_file"], "LEFT"),
-            (root / "RIGHT" / row["right_file"], "RIGHT"),
+            (camera_dirs["HEAD"] / row["head_file"], "HEAD"),
+            (camera_dirs["LEFT"] / row["left_file"], "LEFT"),
+            (camera_dirs["RIGHT"] / row["right_file"], "RIGHT"),
         ]
 
         for src, cam in mappings:
