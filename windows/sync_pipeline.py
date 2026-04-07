@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Tri-cam matching + packaging pipeline  (Windows).
 
-Auto-detection scans every drive letter for a folder named
+Auto-detection scans external (non-system) drives for a folder named
 ``NOT UPLOADED`` containing ``HEAD``, ``LEFT``, and ``RIGHT``.
+If none is found, prompts for a drive letter or folder path.
 
 Commands:
   match   -> create matched_triplets.csv
@@ -54,14 +55,84 @@ def _find_camera_dirs(root: Path) -> dict[str, Path] | None:
     return None
 
 
+def _system_drive_letter() -> str:
+    """Return the system drive letter (usually 'C')."""
+    return os.environ.get("SystemDrive", "C:")[0].upper()
+
+
+def _get_external_drives() -> list[str]:
+    """Return drive letters for non-system drives that exist on disk."""
+    sys_letter = _system_drive_letter()
+    drives: list[str] = []
+    for letter in string.ascii_uppercase:
+        if letter == sys_letter:
+            continue
+        drive_root = Path(f"{letter}:/")
+        if drive_root.exists():
+            drives.append(letter)
+    return drives
+
+
+def _prompt_for_root() -> Path:
+    """Interactively ask the user for a drive letter or folder path."""
+    print("\n" + "=" * 60)
+    print("  No external drive with 'NOT UPLOADED/HEAD/LEFT/RIGHT'")
+    print("  was found automatically.")
+    print("=" * 60)
+    print("\nPlease enter a drive letter or full path to the")
+    print("'NOT UPLOADED' folder.")
+    print()
+    print("  Examples:")
+    print("    E")
+    print(r"    E:\NOT UPLOADED")
+    print(r"    F:\MyProject\NOT UPLOADED")
+    print()
+
+    while True:
+        try:
+            response = input("Drive letter or path: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raise SystemExit(1)
+
+        if not response:
+            continue
+
+        if len(response) == 1 and response.upper() in string.ascii_uppercase:
+            candidate = Path(f"{response.upper()}:/NOT UPLOADED")
+        elif len(response) == 2 and response.endswith(":") and response[0].upper() in string.ascii_uppercase:
+            candidate = Path(f"{response[0].upper()}:/NOT UPLOADED")
+        else:
+            candidate = Path(response).expanduser()
+
+        if candidate.exists():
+            if _find_camera_dirs(candidate):
+                print(f"  Found HEAD/LEFT/RIGHT in: {candidate}")
+            else:
+                print(f"  Warning: '{candidate}' exists but is missing HEAD/LEFT/RIGHT sub-folders.")
+            return candidate
+
+        parent_drive = Path(candidate.anchor)
+        if parent_drive.exists():
+            print(f"  Path '{candidate}' does not exist yet on drive {candidate.anchor}")
+            print(f"  Would you like to use it anyway? (y/n): ", end="")
+            try:
+                confirm = input().strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                raise SystemExit(1)
+            if confirm in ("y", "yes"):
+                return candidate
+        else:
+            print(f"  Drive '{candidate.anchor}' does not exist. Please try again.")
+
+
 def resolve_root(root_arg: str | None = None) -> Path:
-    """Resolve project root across any plugged-in SSD on Windows.
+    """Resolve project root across any plugged-in external SSD on Windows.
 
     Priority:
     1) explicit --root argument
     2) TRI_CAM_ROOT environment variable
-    3) first drive containing NOT UPLOADED/HEAD, LEFT, RIGHT
-    4) D:/NOT UPLOADED fallback
+    3) first external (non-system) drive containing NOT UPLOADED/HEAD, LEFT, RIGHT
+    4) interactive prompt for drive letter or folder path
     """
     if root_arg:
         return Path(root_arg).expanduser()
@@ -70,18 +141,24 @@ def resolve_root(root_arg: str | None = None) -> Path:
     if env_root:
         return Path(env_root).expanduser()
 
+    external_drives = _get_external_drives()
     candidates: list[Path] = []
-    for drive in string.ascii_uppercase:
-        drive_root = Path(f"{drive}:/")
-        if not drive_root.exists():
-            continue
-        candidate = drive_root / "NOT UPLOADED"
+    for drive in external_drives:
+        candidate = Path(f"{drive}:/") / "NOT UPLOADED"
         if _find_camera_dirs(candidate):
             candidates.append(candidate)
-    if candidates:
-        return sorted(candidates, key=lambda p: str(p).lower())[0]
 
-    return Path(r"D:\NOT UPLOADED")
+    if candidates:
+        if len(candidates) == 1:
+            return candidates[0]
+        print(f"\nFound {len(candidates)} external drives with 'NOT UPLOADED':")
+        for i, c in enumerate(candidates, 1):
+            print(f"  {i}) {c}")
+        print(f"\nUsing: {candidates[0]}")
+        print("Tip: use --root to pick a different one.")
+        return candidates[0]
+
+    return _prompt_for_root()
 
 
 def run_cmd(cmd: list[str]) -> bytes:

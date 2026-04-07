@@ -5,6 +5,64 @@ PROJECT_ROOT="${1:-}"
 
 step() { printf '\n\033[36m=== %s ===\033[0m\n' "$1"; }
 
+is_internal_volume() {
+    local volname
+    volname="$(basename "$1")"
+    case "$volname" in
+        "Macintosh HD"*) return 0 ;;
+    esac
+    local resolved
+    resolved="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
+    [ "$resolved" = "/" ] && return 0
+    return 1
+}
+
+prompt_for_root() {
+    echo ""
+    echo "============================================================"
+    echo "  No external drive with 'NOT UPLOADED/HEAD/LEFT/RIGHT'"
+    echo "  was found automatically."
+    echo "============================================================"
+    echo ""
+    echo "Please enter a volume name or full path to the"
+    echo "'NOT UPLOADED' folder."
+    echo ""
+    echo "  Examples:"
+    echo "    MySSD"
+    echo "    /Volumes/MySSD/NOT UPLOADED"
+    echo "    ~/Desktop/NOT UPLOADED"
+    echo ""
+
+    while true; do
+        printf "Volume name or path: "
+        read -r response || exit 1
+        [ -z "$response" ] && continue
+
+        case "$response" in
+            /*|~*)
+                candidate="${response/#\~/$HOME}"
+                ;;
+            *)
+                candidate="/Volumes/${response}/NOT UPLOADED"
+                ;;
+        esac
+
+        if [ -d "$candidate" ]; then
+            echo "$candidate"
+            return
+        fi
+
+        if [ -d "/Volumes/${response}" ] 2>/dev/null; then
+            echo "  Volume '${response}' exists but has no 'NOT UPLOADED' folder."
+            printf "  Use '%s' anyway? (y/n): " "$candidate"
+            read -r confirm || exit 1
+            case "$confirm" in [Yy]*) echo "$candidate"; return ;; esac
+        else
+            echo "  Path '${candidate}' does not exist. Please try again."
+        fi
+    done
+}
+
 resolve_root() {
     if [ -n "$PROJECT_ROOT" ]; then
         echo "$PROJECT_ROOT"
@@ -17,6 +75,7 @@ resolve_root() {
     fi
 
     for vol in /Volumes/*/; do
+        is_internal_volume "$vol" && continue
         candidate="${vol}NOT UPLOADED"
         if [ -d "$candidate/HEAD" ] && [ -d "$candidate/LEFT" ] && [ -d "$candidate/RIGHT" ]; then
             echo "$candidate"
@@ -25,6 +84,7 @@ resolve_root() {
     done
 
     for vol in /Volumes/*/; do
+        is_internal_volume "$vol" && continue
         candidate="${vol}NOT UPLOADED"
         if [ -d "$candidate" ]; then
             echo "$candidate"
@@ -32,7 +92,7 @@ resolve_root() {
         fi
     done
 
-    echo "$HOME/NOT UPLOADED"
+    prompt_for_root
 }
 
 step "Checking for Homebrew"

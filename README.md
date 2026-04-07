@@ -32,13 +32,17 @@ Each ZIP is self-contained -- just unzip and double-click the setup script.
 
 ## SSD auto-detection
 
-Both versions scan attached drives/volumes for a folder named **`NOT UPLOADED`**
+Both versions scan **external** drives/volumes for a folder named **`NOT UPLOADED`**
 containing **`HEAD`**, **`LEFT`**, and **`RIGHT`** sub-folders.
+Internal/system drives (C:\ on Windows, Macintosh HD on macOS) are skipped.
 
-- **Windows**: scans every drive letter (D:\, E:\, F:\, ...)
-- **macOS**: scans `/Volumes/`
+- **Windows**: scans every non-system drive letter (E:\, F:\, G:\, ...)
+- **macOS**: scans external volumes under `/Volumes/`
 
-Override with `--root` or the `TRI_CAM_ROOT` environment variable.
+If no matching external drive is found, you will be prompted to enter a
+**drive letter** (Windows) or **volume name** (macOS), or a full folder path.
+
+Override auto-detection entirely with `--root` or the `TRI_CAM_ROOT` environment variable.
 
 ## Repository layout
 
