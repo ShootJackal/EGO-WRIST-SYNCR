@@ -13,7 +13,6 @@ Internal volumes (Macintosh HD) are skipped.
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import os
 import shutil
@@ -25,30 +24,35 @@ from pathlib import Path
 
 import numpy as np
 
-from licensing import check_or_prompt, validate_key, load_stored_key
+from licensing import check_or_prompt
 
 # ── media config ────────────────────────────────────────────────────
 EXTENSIONS = {".mov", ".mp4", ".mxf", ".avi"}
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
 
-# ── matching thresholds ─────────────────────────────────────────────
+# ── matching thresholds (tightened) ─────────────────────────────────
 DURATION_TOL_SEC = 75
 MAX_SIZE_RATIO = 1.8
 AUDIO_SR = 8000
 SAMPLE_SECONDS = 20
 HOP_MS = 100
 MAX_SHIFT_SEC = 25
-MIN_AUDIO_SCORE = 0.18
+MIN_AUDIO_SCORE = 0.28
+MIN_CONSENSUS_HITS = 2
+MIN_LR_AUDIO_SCORE = 0.20
 
 # ── branding ────────────────────────────────────────────────────────
 APP_NAME = "EGO-WRIST-SYNCR"
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 BAR_FILL = "█"
 BAR_EMPTY = "░"
 BAR_WIDTH = 30
+
+MATCH_FILE = "matched_sets.txt"
+PROGRESS_FILE = ".package_progress"
 
 # ═══════════════════════════════════════════════════════════════════
 #  Terminal UI helpers
@@ -204,7 +208,6 @@ def _prompt_for_root() -> Path:
 
 
 def _prompt_for_destination_volume() -> Path:
-    """Ask the user for a destination volume/path for transfer mode."""
     print()
     print("    Where should UPLOAD_READY be created?")
     print("    Enter a volume name or full folder path.")
@@ -234,14 +237,6 @@ def _prompt_for_destination_volume() -> Path:
 
 
 def resolve_root(root_arg: str | None = None) -> Path:
-    """Resolve project root across any plugged-in external SSD.
-
-    Priority:
-    1) explicit --root argument
-    2) TRI_CAM_ROOT environment variable
-    3) first external volume with NOT UPLOADED/HEAD, LEFT, RIGHT
-    4) interactive prompt
-    """
     if root_arg:
         return Path(root_arg).expanduser()
 
@@ -375,44 +370,55 @@ def candidate_ok(a: dict, b: dict) -> bool:
 def choose_sample_starts(d1: float, d2: float) -> list[int]:
     m = min(d1, d2)
     starts = [0]
-    if m > SAMPLE_SECONDS * 3:
+    if m > SAMPLE_SECONDS * 2:
         starts.append(int(max(0, (m / 2) - (SAMPLE_SECONDS / 2))))
-    if m > SAMPLE_SECONDS * 5:
+    if m > SAMPLE_SECONDS * 4:
         starts.append(int(max(0, m - SAMPLE_SECONDS - 10)))
+    if m > SAMPLE_SECONDS * 6:
+        starts.append(int(m * 0.25))
     seen: set[int] = set()
     return [s for s in starts if s not in seen and not seen.add(s)]  # type: ignore[func-returns-value]
 
 
-def audio_match_score(a: dict, b: dict):
+def audio_match_score_consensus(a: dict, b: dict):
     starts = choose_sample_starts(a["duration"], b["duration"])
-    best_score = best_offset = None
+    scores: list[float] = []
+    offsets: list[float] = []
     for start_sec in starts:
         env_a = extract_env(str(a["path"]), start_sec)
         env_b = extract_env(str(b["path"]), start_sec)
         score, offset = corr_score(env_a, env_b)
-        if score is not None and (best_score is None or score > best_score):
-            best_score, best_offset = score, offset
-    return best_score, best_offset
+        if score is not None and offset is not None:
+            scores.append(score)
+            offsets.append(offset)
+
+    if not scores:
+        return None, None, 0
+
+    hits = sum(1 for s in scores if s >= MIN_AUDIO_SCORE)
+    best_idx = int(np.argmax(scores))
+    return scores[best_idx], offsets[best_idx], hits
 
 
 def combined_score(a: dict, b: dict):
     ds = duration_sim(a["duration"], b["duration"])
     ss = size_sim(a["size"], b["size"])
-    audio_score, offset = audio_match_score(a, b)
+    audio_score, offset, hits = audio_match_score_consensus(a, b)
     if audio_score is None:
-        return None, None, ds, ss, None
+        return None, None, ds, ss, None, 0
     total = (audio_score * 0.75) + (ds * 0.15) + (ss * 0.10)
-    return total, offset, ds, ss, audio_score
+    return total, offset, ds, ss, audio_score, hits
 
 
-def confidence_label(total: float, audio_score: float) -> str:
-    if audio_score is None:
+def confidence_label(avg_total: float, avg_audio: float,
+                     min_hits: int) -> str:
+    if avg_audio is None:
         return "NO_AUDIO"
-    if total >= 0.60 and audio_score >= 0.45:
+    if avg_total >= 0.60 and avg_audio >= 0.50 and min_hits >= MIN_CONSENSUS_HITS:
         return "HIGH"
-    if total >= 0.40 and audio_score >= 0.28:
+    if avg_total >= 0.42 and avg_audio >= 0.32 and min_hits >= MIN_CONSENSUS_HITS:
         return "MEDIUM"
-    if total >= 0.25 and audio_score >= MIN_AUDIO_SCORE:
+    if avg_total >= 0.28 and avg_audio >= MIN_AUDIO_SCORE:
         return "LOW"
     return "REVIEW"
 
@@ -458,7 +464,7 @@ def scan_folder(folder: Path, label: str) -> list[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  Matching  (with progress bar)
+#  Matching  (with progress bar + consensus)
 # ═══════════════════════════════════════════════════════════════════
 
 def greedy_match(anchor_files: list[dict], other_files: list[dict],
@@ -477,13 +483,14 @@ def greedy_match(anchor_files: list[dict], other_files: list[dict],
 
             if not candidate_ok(a, b):
                 continue
-            total, offset, ds, ss, audio_score = combined_score(a, b)
+            total, offset, ds, ss, audio_score, hits = combined_score(a, b)
             if total is None or audio_score is None or audio_score < MIN_AUDIO_SCORE:
                 continue
             candidates.append({
                 "anchor_idx": i, "other_idx": j,
                 "total": total, "audio_score": audio_score,
                 "offset": offset, "duration_sim": ds, "size_sim": ss,
+                "hits": hits,
             })
 
     progress_done(f"{label} — {len(candidates)} candidates ({elapsed_str(time.time() - t0)})")
@@ -503,19 +510,69 @@ def greedy_match(anchor_files: list[dict], other_files: list[dict],
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  run_match
+#  run_match  —  full scan + human-readable TXT
 # ═══════════════════════════════════════════════════════════════════
 
-CSV_FIELDS = [
-    "set_id", "confidence",
-    "head_file", "left_file", "right_file",
-    "head_duration_sec", "left_duration_sec", "right_duration_sec",
-    "head_size_mb", "left_size_mb", "right_size_mb",
-    "head_left_audio_score", "head_right_audio_score", "left_right_audio_score",
-    "left_offset_vs_head_sec", "right_offset_vs_head_sec", "right_offset_vs_left_sec",
-    "head_left_total", "head_right_total", "left_right_total",
-    "avg_total_score", "avg_audio_score",
-]
+def _write_match_txt(rows: list[dict], out_path: Path, root: Path,
+                     camera_dirs: dict[str, Path]):
+    with out_path.open("w", encoding="utf-8") as f:
+        f.write(f"EGO-WRIST-SYNCR  Matched Sets\n")
+        f.write(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Source:    {root}\n")
+        f.write(f"Total:     {len(rows)} set(s)\n")
+        f.write("=" * 70 + "\n\n")
+
+        for row in rows:
+            f.write(f"--- {row['set_id']}  [{row['confidence']}] ---\n")
+            f.write(f"\n")
+            f.write(f"  HEAD:   {camera_dirs['HEAD'] / row['head_file']}\n")
+            f.write(f"  LEFT:   {camera_dirs['LEFT'] / row['left_file']}\n")
+            f.write(f"  RIGHT:  {camera_dirs['RIGHT'] / row['right_file']}\n")
+            f.write(f"\n")
+            f.write(f"  Duration  HEAD {row['head_duration_sec']}s"
+                    f"  LEFT {row['left_duration_sec']}s"
+                    f"  RIGHT {row['right_duration_sec']}s\n")
+            f.write(f"  Size      HEAD {row['head_size_mb']} MB"
+                    f"  LEFT {row['left_size_mb']} MB"
+                    f"  RIGHT {row['right_size_mb']} MB\n")
+            f.write(f"  Audio     H-L {row['hl_audio']}"
+                    f"  H-R {row['hr_audio']}"
+                    f"  L-R {row['lr_audio']}\n")
+            f.write(f"  Score     {row['avg_total_score']}"
+                    f"  (min consensus hits: {row['min_hits']})\n")
+            f.write("\n")
+
+        f.write("=" * 70 + "\n")
+        f.write("Copy any path above and paste into Finder to navigate there.\n")
+
+
+def _parse_match_txt(txt_path: Path) -> list[dict]:
+    rows: list[dict] = []
+    current: dict = {}
+
+    with txt_path.open("r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.rstrip("\n")
+
+            if line.startswith("--- SET_"):
+                if current:
+                    rows.append(current)
+                parts = line.strip("- ").split()
+                current = {"set_id": parts[0]}
+                if len(parts) > 1:
+                    current["confidence"] = parts[1].strip("[]")
+
+            elif line.strip().startswith("HEAD:") and "set_id" in current:
+                current["head_full"] = line.split("HEAD:", 1)[1].strip()
+            elif line.strip().startswith("LEFT:") and "set_id" in current:
+                current["left_full"] = line.split("LEFT:", 1)[1].strip()
+            elif line.strip().startswith("RIGHT:") and "set_id" in current:
+                current["right_full"] = line.split("RIGHT:", 1)[1].strip()
+
+    if current and "set_id" in current:
+        rows.append(current)
+
+    return rows
 
 
 def run_match(root: Path) -> Path:
@@ -546,17 +603,18 @@ def run_match(root: Path) -> Path:
     head_right = greedy_match(head_files, right_files, "HEAD → RIGHT")
 
     print()
-    print("  ── STEP 3/3 : Building triplets ───────────────────────")
+    print("  ── STEP 3/3 : Building triplets (cross-validated) ─────")
     print()
 
     rows: list[dict] = []
+    rejected_no_lr = 0
     used_left: set[int] = set()
     used_right: set[int] = set()
     triplet_total = len(head_files)
 
     for head_idx, head in enumerate(head_files):
         progress_bar(head_idx, triplet_total, "Assembling sets",
-                     f"{len(rows)} sets so far")
+                     f"{len(rows)} matched")
 
         if head_idx not in head_left or head_idx not in head_right:
             continue
@@ -567,9 +625,16 @@ def run_match(root: Path) -> Path:
 
         left = left_files[left_idx]
         right = right_files[right_idx]
-        lr_total, lr_offset, _, _, lr_audio = combined_score(left, right)
+        lr_total, lr_offset, _, _, lr_audio, lr_hits = combined_score(left, right)
         hl = head_left[head_idx]
         hr = head_right[head_idx]
+
+        if lr_audio is not None and lr_audio < MIN_LR_AUDIO_SCORE:
+            rejected_no_lr += 1
+            continue
+
+        min_hits = min(hl["hits"], hr["hits"],
+                       lr_hits if lr_hits else 0)
 
         avg_total = float(np.mean([
             hl["total"], hr["total"],
@@ -580,9 +645,11 @@ def run_match(root: Path) -> Path:
             lr_audio if lr_audio is not None else 0.0,
         ]))
 
+        conf = confidence_label(avg_total, avg_audio, min_hits)
+
         rows.append({
             "set_id": f"SET_{len(rows)+1:03d}",
-            "confidence": confidence_label(avg_total, avg_audio),
+            "confidence": conf,
             "head_file": head["relpath"],
             "left_file": left["relpath"],
             "right_file": right["relpath"],
@@ -592,42 +659,72 @@ def run_match(root: Path) -> Path:
             "head_size_mb": round(head["size"] / (1024**2), 2),
             "left_size_mb": round(left["size"] / (1024**2), 2),
             "right_size_mb": round(right["size"] / (1024**2), 2),
-            "head_left_audio_score": round(hl["audio_score"], 4),
-            "head_right_audio_score": round(hr["audio_score"], 4),
-            "left_right_audio_score": round(lr_audio, 4) if lr_audio is not None else "",
-            "left_offset_vs_head_sec": round(hl["offset"], 2) if hl["offset"] is not None else "",
-            "right_offset_vs_head_sec": round(hr["offset"], 2) if hr["offset"] is not None else "",
-            "right_offset_vs_left_sec": round(lr_offset, 2) if lr_offset is not None else "",
-            "head_left_total": round(hl["total"], 4),
-            "head_right_total": round(hr["total"], 4),
-            "left_right_total": round(lr_total, 4) if lr_total is not None else "",
+            "hl_audio": round(hl["audio_score"], 4),
+            "hr_audio": round(hr["audio_score"], 4),
+            "lr_audio": round(lr_audio, 4) if lr_audio is not None else "N/A",
             "avg_total_score": round(avg_total, 4),
             "avg_audio_score": round(avg_audio, 4),
+            "min_hits": min_hits,
         })
         used_left.add(left_idx)
         used_right.add(right_idx)
 
     progress_done(f"Assembled {len(rows)} matched triplet(s)")
 
+    if rejected_no_lr:
+        print(f"    Rejected {rejected_no_lr} triplet(s): LEFT-RIGHT cross-validation failed")
+
     rows.sort(key=lambda x: x["avg_total_score"], reverse=True)
 
-    out_csv = root / "matched_triplets.csv"
-    with out_csv.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
-        writer.writeheader()
-        writer.writerows(rows)
+    out_txt = root / MATCH_FILE
+    _write_match_txt(rows, out_txt, root, camera_dirs)
+
+    high = sum(1 for r in rows if r["confidence"] == "HIGH")
+    med = sum(1 for r in rows if r["confidence"] == "MEDIUM")
+    low = sum(1 for r in rows if r["confidence"] == "LOW")
+    rev = sum(1 for r in rows if r["confidence"] == "REVIEW")
 
     print()
     print("  ┌─────────────────────────────────────────────────┐")
     print(f"  │  ✓  Matched sets : {len(rows):<31}│")
-    print(f"  │     CSV written  : {str(out_csv):<31}│")
+    print(f"  │     HIGH: {high}   MEDIUM: {med}   LOW: {low}   REVIEW: {rev:<5}│")
+    print(f"  │     Written to  : {MATCH_FILE:<31}│")
     print("  └─────────────────────────────────────────────────┘")
     print()
-    return out_csv
+    return out_txt
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  run_package  —  3 modes: copy, move, transfer
+#  Disk space checking
+# ═══════════════════════════════════════════════════════════════════
+
+def _check_disk_space(dest: Path, needed_bytes: int) -> bool:
+    try:
+        usage = shutil.disk_usage(str(dest) if dest.exists() else str(dest.anchor))
+        return usage.free >= needed_bytes
+    except OSError:
+        return True
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Package progress tracking (crash/disconnect recovery)
+# ═══════════════════════════════════════════════════════════════════
+
+def _save_progress(progress_path: Path, completed: list[str]):
+    progress_path.write_text("\n".join(completed) + "\n", encoding="utf-8")
+
+
+def _load_progress(progress_path: Path) -> set[str]:
+    if not progress_path.exists():
+        return set()
+    text = progress_path.read_text(encoding="utf-8").strip()
+    if not text:
+        return set()
+    return set(text.splitlines())
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  run_package  —  3 modes with space check + crash recovery
 # ═══════════════════════════════════════════════════════════════════
 
 def _package_menu() -> str:
@@ -643,14 +740,14 @@ def _package_menu() -> str:
     print("  │     Saves disk space — originals are relocated  │")
     print("  │                                                 │")
     print("  │  3) Transfer to a different drive               │")
-    print("  │     Copies files + CSV to another SSD/drive     │")
+    print("  │     Copies files + match file to another SSD    │")
     print("  │     and creates the folder structure there      │")
     print("  └─────────────────────────────────────────────────┘")
     print()
     return ask_choice("    Choose [1/2/3]: ", ["1", "2", "3"])
 
 
-def run_package(root: Path, csv_path: Path | None = None,
+def run_package(root: Path, match_path: Path | None = None,
                 mode: str | None = None,
                 dest_path: Path | None = None) -> Path:
     camera_dirs = _find_camera_dirs(root)
@@ -660,9 +757,9 @@ def run_package(root: Path, csv_path: Path | None = None,
             f"Resolved root: {root}"
         )
 
-    csv_file = csv_path if csv_path else root / "matched_triplets.csv"
-    if not csv_file.exists():
-        raise FileNotFoundError(f"Missing CSV: {csv_file}. Run a full scan first.")
+    txt_file = match_path if match_path else root / MATCH_FILE
+    if not txt_file.exists():
+        raise FileNotFoundError(f"Missing match file: {txt_file}. Run a full scan first.")
 
     if mode is None:
         mode = _package_menu()
@@ -677,42 +774,94 @@ def run_package(root: Path, csv_path: Path | None = None,
 
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    with csv_file.open("r", newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
+    rows = _parse_match_txt(txt_file)
 
-    file_ops: list[tuple[Path, Path]] = []
+    file_ops: list[tuple[Path, Path, str]] = []
     for row in rows:
         set_id = row["set_id"]
-        for src_rel, cam in [
-            (row["head_file"], "HEAD"),
-            (row["left_file"], "LEFT"),
-            (row["right_file"], "RIGHT"),
-        ]:
-            src = camera_dirs[cam] / src_rel
+        for key, cam in [("head_full", "HEAD"), ("left_full", "LEFT"), ("right_full", "RIGHT")]:
+            full_path_str = row.get(key, "")
+            if not full_path_str:
+                continue
+            src = Path(full_path_str)
             if src.exists():
                 dst = upload_dir / f"{set_id}_{cam}{src.suffix.lower()}"
-                file_ops.append((src, dst))
+                tag = f"{set_id}_{cam}"
+                file_ops.append((src, dst, tag))
 
     total = len(file_ops)
-    total_bytes = sum(s.stat().st_size for s, _ in file_ops if s.exists())
+    if total == 0:
+        print("    No files to package.")
+        return upload_dir
+
+    total_bytes = sum(s.stat().st_size for s, _, _ in file_ops if s.exists())
+
+    if mode != "2":
+        if not _check_disk_space(upload_dir, total_bytes):
+            free = shutil.disk_usage(str(upload_dir) if upload_dir.exists()
+                                     else str(upload_dir.anchor)).free
+            print()
+            print("  ┌─────────────────────────────────────────────────┐")
+            print("  │  ⚠  NOT ENOUGH DISK SPACE                      │")
+            print(f"  │     Need:      {format_size(total_bytes):<36}│")
+            print(f"  │     Available:  {format_size(free):<36}│")
+            print("  │                                                 │")
+            print("  │  Options:                                       │")
+            print("  │   - Free up space and re-run                    │")
+            print("  │   - Use mode 2 (move) to avoid doubling         │")
+            print("  │   - Use mode 3 (transfer) to a bigger drive     │")
+            print("  └─────────────────────────────────────────────────┘")
+            print()
+            yn = ask_choice("    Continue anyway? (y/n): ", ["y", "n", "Y", "N"])
+            if yn.lower() != "y":
+                print("    Aborted. Re-run when ready.")
+                return upload_dir
+
+    progress_path = upload_dir / PROGRESS_FILE
+    already_done = _load_progress(progress_path)
+    skipped = 0
+
     verb = "Moving" if mode == "2" else "Copying" if mode == "1" else "Transferring"
     t0 = time.time()
+    completed_tags: list[str] = list(already_done)
 
-    for i, (src, dst) in enumerate(file_ops):
+    for i, (src, dst, tag) in enumerate(file_ops):
+        if tag in already_done:
+            skipped += 1
+            continue
+
         extra = f"{i+1}/{total}  {format_size(src.stat().st_size)}"
         progress_bar(i, total, f"{verb} files", extra)
 
-        if mode == "2":
-            shutil.move(str(src), str(dst))
-        else:
-            shutil.copy2(src, dst)
+        try:
+            if mode == "2":
+                shutil.move(str(src), str(dst))
+            else:
+                shutil.copy2(src, dst)
+            completed_tags.append(tag)
+            _save_progress(progress_path, completed_tags)
+        except OSError as exc:
+            print(f"\n\n    ⚠  Error on file: {src.name}")
+            print(f"       {exc}")
+            print()
+            print("    The drive may have been disconnected or run out of space.")
+            print(f"    Progress saved — {len(completed_tags)} of {total} files done.")
+            print("    Re-run packaging to resume from where it stopped.")
+            print()
+            return upload_dir
 
     progress_done(f"{verb} complete — {total} files ({format_size(total_bytes)}, {elapsed_str(time.time() - t0)})")
 
+    if skipped:
+        print(f"    ({skipped} files already done from previous run)")
+
     if mode == "3":
-        dest_csv = upload_dir / "matched_triplets.csv"
-        shutil.copy2(csv_file, dest_csv)
-        print(f"    CSV copied to: {dest_csv}")
+        dest_txt = upload_dir / MATCH_FILE
+        shutil.copy2(txt_file, dest_txt)
+        print(f"    Match file copied to: {dest_txt}")
+
+    if progress_path.exists():
+        progress_path.unlink()
 
     print()
     print("  ┌─────────────────────────────────────────────────┐")
@@ -739,35 +888,46 @@ def interactive_launcher():
     print(f"    Source SSD: {root}")
     print()
 
-    csv_exists = (root / "matched_triplets.csv").exists()
+    txt_exists = (root / MATCH_FILE).exists()
+    resume_exists = False
+    if txt_exists:
+        upload_dir = root / "UPLOAD_READY"
+        resume_exists = (upload_dir / PROGRESS_FILE).exists()
 
     print("  ┌─────────────────────────────────────────────────┐")
     print("  │  What would you like to do?                     │")
     print("  │                                                 │")
     print("  │  1) Full scan + match + package                 │")
     print("  │     Scans HEAD/LEFT/RIGHT, matches audio,       │")
-    print("  │     writes CSV, then packages files             │")
+    print("  │     then packages files                         │")
     print("  │                                                 │")
-    if csv_exists:
-        print("  │  2) Package only (CSV already exists)           │")
-        print("  │     Skip scanning — use existing CSV to         │")
-        print("  │     copy / move / transfer matched files        │")
+    if txt_exists:
+        print("  │  2) Package only (match file exists)            │")
+        print("  │     Skip scanning — use existing match file     │")
+        print("  │     to copy / move / transfer matched files     │")
         print("  │                                                 │")
-        print("  │  3) Re-scan only (regenerate CSV)               │")
+        print("  │  3) Re-scan only (regenerate match file)        │")
         print("  │     Run the audio scan again without packaging  │")
         print("  │                                                 │")
+        if resume_exists:
+            print("  │  4) Resume packaging                            │")
+            print("  │     Continue a previous copy/transfer that      │")
+            print("  │     was interrupted                             │")
+            print("  │                                                 │")
     else:
-        print("  │  2) Scan only (generate CSV, package later)     │")
+        print("  │  2) Scan only (generate match file first)       │")
         print("  │     Run the audio scan without packaging        │")
         print("  │                                                 │")
     print("  │  0) Exit                                        │")
     print("  └─────────────────────────────────────────────────┘")
     print()
 
-    if csv_exists:
-        choice = ask_choice("    Choose [0/1/2/3]: ", ["0", "1", "2", "3"])
-    else:
-        choice = ask_choice("    Choose [0/1/2]: ", ["0", "1", "2"])
+    valid = ["0", "1", "2"]
+    if txt_exists:
+        valid.append("3")
+    if resume_exists:
+        valid.append("4")
+    choice = ask_choice(f"    Choose [{'/'.join(valid)}]: ", valid)
 
     if choice == "0":
         print("    Goodbye!")
@@ -776,14 +936,16 @@ def interactive_launcher():
     t_global = time.time()
 
     if choice == "1":
-        csv_out = run_match(root)
-        run_package(root, csv_out)
-    elif choice == "2" and csv_exists:
+        match_out = run_match(root)
+        run_package(root, match_out)
+    elif choice == "2" and txt_exists:
         run_package(root)
-    elif choice == "2" and not csv_exists:
+    elif choice == "2" and not txt_exists:
         run_match(root)
     elif choice == "3":
         run_match(root)
+    elif choice == "4":
+        run_package(root)
 
     print(f"    Total time: {elapsed_str(time.time() - t_global)}")
     print()
@@ -802,12 +964,12 @@ def build_parser() -> argparse.ArgumentParser:
     launch_p = subparsers.add_parser("launch", help="Interactive menu (default)")
     launch_p.add_argument("--root", default=None)
 
-    match_p = subparsers.add_parser("match", help="Generate matched_triplets.csv")
+    match_p = subparsers.add_parser("match", help="Generate match file")
     match_p.add_argument("--root", default=None)
 
     pkg_p = subparsers.add_parser("package", help="Package matched clips")
     pkg_p.add_argument("--root", default=None)
-    pkg_p.add_argument("--csv", default=None)
+    pkg_p.add_argument("--match-file", default=None)
     pkg_p.add_argument("--mode", choices=["1", "2", "3"], default=None,
                        help="1=copy, 2=move, 3=transfer")
     pkg_p.add_argument("--dest", default=None, help="Destination path (mode 3)")
@@ -833,9 +995,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "package":
-        csv_path = Path(args.csv) if args.csv else None
+        mf = Path(args.match_file) if args.match_file else None
         dest = Path(args.dest) if args.dest else None
-        run_package(root, csv_path, mode=args.mode, dest_path=dest)
+        run_package(root, mf, mode=args.mode, dest_path=dest)
         return 0
 
     return 0
