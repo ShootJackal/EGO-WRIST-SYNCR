@@ -3,6 +3,15 @@
 Automatically matches HEAD, LEFT and RIGHT camera clips by audio
 fingerprinting and packages them into upload-ready sets.
 
+## License key
+
+On first run you will be asked for a license key.
+
+- **Community (free):** `EWS-COMMUNITY-FREE-2025`
+- **Pro:** purchase at <your-store-url>
+
+The key is saved locally (`.tricamsync_license`) so you only enter it once.
+
 ## SSD auto-detection
 
 The scripts scan **external** volumes under `/Volumes/` for any attached SSD
@@ -25,20 +34,31 @@ You can also override auto-detection:
 3. Wait for Homebrew, Python 3.12, FFmpeg and pip packages to install.
 4. Drop your videos into the `HEAD`, `LEFT`, `RIGHT` folders on your SSD.
 
-## Run matching
+## Run (recommended)
 
-- Double-click **`RUN_MATCH.command`**, or
-- `python3 match_3cams.py`, or
+- Double-click **`LAUNCH.command`** for the interactive menu.
+
+The launcher lets you:
+- **Full scan + match + package** — does everything in one go
+- **Package only** — if you already have a `matched_triplets.csv`
+- **Re-scan only** — regenerate the CSV
+
+### Packaging modes
+
+| Mode | What it does |
+|------|-------------|
+| **Copy** | Duplicates matched files into `UPLOAD_READY` on the same SSD |
+| **Move / reorganize** | Moves files into `UPLOAD_READY` (saves disk space) |
+| **Transfer** | Copies files + CSV to a different SSD/drive |
+
+## Legacy scripts
+
+These still work for backwards compatibility:
+
+- **`RUN_MATCH.command`** — runs audio scan only
+- **`RUN_PACKAGE.command`** — copies matched files (copy mode)
+- `python3 match_3cams.py`
 - `python3 sync_pipeline.py match`
-
-This writes `matched_triplets.csv` inside your `NOT UPLOADED` folder.
-
-## Package matched sets
-
-- Double-click **`RUN_PACKAGE.command`**, or
-- `python3 sync_pipeline.py package`
-
-This copies matched files into `NOT UPLOADED/UPLOAD_READY/`.
 
 ## Expected folder layout
 

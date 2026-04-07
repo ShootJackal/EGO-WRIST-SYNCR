@@ -20,15 +20,43 @@ Each ZIP is self-contained -- just unzip and double-click the setup script.
 1. Download and unzip **TriCamSync-Windows.zip**.
 2. Double-click **`ONE_CLICK_SETUP.bat`** to install Python, FFmpeg and dependencies.
 3. Plug in your SSD containing `NOT UPLOADED\HEAD`, `LEFT`, `RIGHT`.
-4. Double-click **`RUN_MATCH.bat`** to match clips.
-5. Double-click **`RUN_PACKAGE.bat`** to copy matched sets into `UPLOAD_READY`.
+4. Double-click **`LAUNCH.bat`** — follow the interactive menu.
 
 ### macOS
 1. Download and unzip **TriCamSync-macOS.zip**.
 2. Double-click **`ONE_CLICK_SETUP.command`** to install Homebrew, Python, FFmpeg and dependencies.
 3. Plug in your SSD containing `NOT UPLOADED/HEAD`, `LEFT`, `RIGHT`.
-4. Double-click **`RUN_MATCH.command`** to match clips.
-5. Double-click **`RUN_PACKAGE.command`** to copy matched sets into `UPLOAD_READY`.
+4. Double-click **`LAUNCH.command`** — follow the interactive menu.
+
+## License key
+
+On first launch you will be prompted for a license key.
+
+| Tier | Key | Features |
+|------|-----|----------|
+| **Community (free)** | `EWS-COMMUNITY-FREE-2025` | Full scan + match + package |
+| **Pro** | Unique per-customer key | Same features, supports the project |
+
+The key is saved locally so you only enter it once.
+
+## Unified launcher
+
+The new **LAUNCH** script gives you a single interactive menu:
+
+1. **Full scan + match + package** — scans all cameras, writes `matched_triplets.csv`, then packages files.
+2. **Package only** (when CSV already exists) — skip scanning, go straight to packaging.
+3. **Re-scan / scan only** — regenerate the CSV without packaging.
+0. **Exit**
+
+### Packaging modes
+
+When packaging, you choose one of three modes:
+
+| Mode | What it does |
+|------|-------------|
+| **Copy** | Duplicates matched files into `UPLOAD_READY` on the same SSD |
+| **Move / reorganize** | Moves files into `UPLOAD_READY` (saves disk space, originals are relocated) |
+| **Transfer** | Copies files + CSV to a different SSD/drive |
 
 ## SSD auto-detection
 
@@ -47,23 +75,29 @@ Override auto-detection entirely with `--root` or the `TRI_CAM_ROOT` environment
 ## Repository layout
 
 ```
-windows/          <- Windows release files
+keygen.py             <- Pro license key generator (repo owner only)
+
+windows/              <- Windows release files
+  LAUNCH.bat             <- Unified launcher (recommended)
   ONE_CLICK_SETUP.bat
-  RUN_MATCH.bat
-  RUN_PACKAGE.bat
+  RUN_MATCH.bat          <- Legacy — still works
+  RUN_PACKAGE.bat        <- Legacy — still works
   setup_windows.ps1
   sync_pipeline.py
   match_3cams.py
+  licensing.py
   requirements.txt
   README.md
 
-macos/            <- macOS release files
+macos/                <- macOS release files
+  LAUNCH.command         <- Unified launcher (recommended)
   ONE_CLICK_SETUP.command
-  RUN_MATCH.command
-  RUN_PACKAGE.command
+  RUN_MATCH.command      <- Legacy — still works
+  RUN_PACKAGE.command    <- Legacy — still works
   setup_macos.sh
   sync_pipeline.py
   match_3cams.py
+  licensing.py
   requirements.txt
   README.md
 ```
