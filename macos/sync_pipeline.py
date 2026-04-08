@@ -31,16 +31,15 @@ EXTENSIONS = {".mov", ".mp4", ".mxf", ".avi"}
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
 
-# ── matching thresholds (tightened) ─────────────────────────────────
+# ── matching thresholds ─────────────────────────────────────────────
 DURATION_TOL_SEC = 75
 MAX_SIZE_RATIO = 1.8
 AUDIO_SR = 8000
 SAMPLE_SECONDS = 20
 HOP_MS = 100
 MAX_SHIFT_SEC = 25
-MIN_AUDIO_SCORE = 0.28
-MIN_CONSENSUS_HITS = 2
-MIN_LR_AUDIO_SCORE = 0.20
+MIN_AUDIO_SCORE = 0.22
+MIN_LR_AUDIO_SCORE = 0.18
 
 # ── branding ────────────────────────────────────────────────────────
 APP_NAME = "EGO-WRIST-SYNCR"
@@ -370,12 +369,10 @@ def candidate_ok(a: dict, b: dict) -> bool:
 def choose_sample_starts(d1: float, d2: float) -> list[int]:
     m = min(d1, d2)
     starts = [0]
-    if m > SAMPLE_SECONDS * 2:
+    if m > SAMPLE_SECONDS * 3:
         starts.append(int(max(0, (m / 2) - (SAMPLE_SECONDS / 2))))
-    if m > SAMPLE_SECONDS * 4:
+    if m > SAMPLE_SECONDS * 5:
         starts.append(int(max(0, m - SAMPLE_SECONDS - 10)))
-    if m > SAMPLE_SECONDS * 6:
-        starts.append(int(m * 0.25))
     seen: set[int] = set()
     return [s for s in starts if s not in seen and not seen.add(s)]  # type: ignore[func-returns-value]
 
@@ -414,11 +411,13 @@ def confidence_label(avg_total: float, avg_audio: float,
                      min_hits: int) -> str:
     if avg_audio is None:
         return "NO_AUDIO"
-    if avg_total >= 0.60 and avg_audio >= 0.50 and min_hits >= MIN_CONSENSUS_HITS:
+    if avg_total >= 0.55 and avg_audio >= 0.42 and min_hits >= 2:
         return "HIGH"
-    if avg_total >= 0.42 and avg_audio >= 0.32 and min_hits >= MIN_CONSENSUS_HITS:
+    if avg_total >= 0.55 and avg_audio >= 0.42:
         return "MEDIUM"
-    if avg_total >= 0.28 and avg_audio >= MIN_AUDIO_SCORE:
+    if avg_total >= 0.35 and avg_audio >= MIN_AUDIO_SCORE:
+        return "MEDIUM"
+    if avg_total >= 0.22 and avg_audio >= MIN_AUDIO_SCORE:
         return "LOW"
     return "REVIEW"
 
@@ -633,8 +632,10 @@ def run_match(root: Path) -> Path:
             rejected_no_lr += 1
             continue
 
-        min_hits = min(hl["hits"], hr["hits"],
-                       lr_hits if lr_hits else 0)
+        pairwise_hits = [hl["hits"], hr["hits"]]
+        if lr_hits > 0:
+            pairwise_hits.append(lr_hits)
+        min_hits = min(pairwise_hits) if pairwise_hits else 0
 
         avg_total = float(np.mean([
             hl["total"], hr["total"],
