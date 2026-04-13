@@ -20,7 +20,6 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -45,7 +44,7 @@ MIN_TRIPLET_AVG = 0.30
 
 # ── branding ────────────────────────────────────────────────────────
 APP_NAME = "EGO-WRIST-SYNCR"
-VERSION = "2.1.0"
+VERSION = "3.0.0"
 
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 BAR_FILL = "█"
