@@ -20,7 +20,6 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -45,7 +44,7 @@ MIN_TRIPLET_AVG = 0.30
 
 # ── branding ────────────────────────────────────────────────────────
 APP_NAME = "EGO-WRIST-SYNCR"
-VERSION = "2.1.0"
+VERSION = "3.0.0"
 
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 BAR_FILL = "█"
@@ -347,7 +346,7 @@ def preextract_audio(files: list[dict], label: str):
     """Pre-extract audio envelopes for all files at all sample points in parallel."""
     jobs: list[tuple[str, int]] = []
     for f in files:
-        for start in choose_sample_starts(f["duration"], f["duration"]):
+        for start in file_sample_starts(f["duration"]):
             key = (str(f["path"]), start)
             if key not in _env_cache:
                 jobs.append(key)
@@ -421,36 +420,42 @@ def candidate_ok(a: dict, b: dict) -> bool:
     return big / small <= MAX_SIZE_RATIO
 
 
-def choose_sample_starts(d1: float, d2: float) -> list[int]:
-    """Pick up to 5 evenly-spaced sample points across the clip."""
-    m = min(d1, d2)
-    if m < SAMPLE_SECONDS:
+def file_sample_starts(duration: float) -> list[int]:
+    """Fixed sample grid for a single file based on its own duration."""
+    if duration < SAMPLE_SECONDS:
         return [0]
     starts = [0]
-    if m > SAMPLE_SECONDS * 2:
-        starts.append(int(m * 0.25))
-    if m > SAMPLE_SECONDS * 2.5:
-        starts.append(int(max(0, (m / 2) - (SAMPLE_SECONDS / 2))))
-    if m > SAMPLE_SECONDS * 3:
-        starts.append(int(m * 0.75 - SAMPLE_SECONDS))
-    if m > SAMPLE_SECONDS * 3.5:
-        starts.append(int(max(0, m - SAMPLE_SECONDS - 5)))
+    if duration > SAMPLE_SECONDS * 2:
+        starts.append(int(duration * 0.25))
+    if duration > SAMPLE_SECONDS * 2.5:
+        starts.append(int(max(0, (duration / 2) - (SAMPLE_SECONDS / 2))))
+    if duration > SAMPLE_SECONDS * 3:
+        starts.append(int(duration * 0.75 - SAMPLE_SECONDS))
+    if duration > SAMPLE_SECONDS * 3.5:
+        starts.append(int(max(0, duration - SAMPLE_SECONDS - 5)))
     seen: set[int] = set()
     return [s for s in starts if s not in seen and not seen.add(s)]  # type: ignore[func-returns-value]
 
 
 def audio_match_score(a: dict, b: dict):
-    """Sample up to 5 points, return best score, median score, and hit count."""
-    starts = choose_sample_starts(a["duration"], b["duration"])
+    """Cross-correlate all cached sample points between two files."""
+    starts_a = file_sample_starts(a["duration"])
+    starts_b = file_sample_starts(b["duration"])
+
     scores: list[float] = []
     offsets: list[float] = []
-    for start_sec in starts:
-        env_a = extract_env(str(a["path"]), start_sec)
-        env_b = extract_env(str(b["path"]), start_sec)
-        score, offset = corr_score(env_a, env_b)
-        if score is not None and offset is not None:
-            scores.append(score)
-            offsets.append(offset)
+    for sa in starts_a:
+        env_a = extract_env(str(a["path"]), sa)
+        if env_a is None:
+            continue
+        for sb in starts_b:
+            env_b = extract_env(str(b["path"]), sb)
+            if env_b is None:
+                continue
+            score, offset = corr_score(env_a, env_b)
+            if score is not None and offset is not None:
+                scores.append(score)
+                offsets.append(offset)
 
     if not scores:
         return None, None, None, 0
