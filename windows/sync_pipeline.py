@@ -334,6 +334,10 @@ def _max_workers() -> int:
     return max(4, cpus)
 
 
+def _count_running(futures: dict) -> int:
+    return sum(1 for f in futures if f.running())
+
+
 def preextract_audio(files: list[dict], label: str):
     """Pre-extract audio envelopes for all files at all sample points in parallel."""
     jobs: list[tuple[str, int]] = []
@@ -350,6 +354,7 @@ def preextract_audio(files: list[dict], label: str):
     done = 0
     t0 = time.time()
     workers = _max_workers()
+    peak_active = 0
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
@@ -363,11 +368,17 @@ def preextract_audio(files: list[dict], label: str):
             except Exception:
                 _env_cache[(path_str, start)] = None
             done += 1
+            active = _count_running(futures)
+            peak_active = max(peak_active, active)
             if done % max(1, total // 50) == 0 or done == total:
-                extra = f"{done}/{total}  {_max_workers()}T  {elapsed_str(time.time() - t0)}"
+                elapsed = time.time() - t0
+                rate = done / elapsed if elapsed > 0 else 0
+                extra = f"{done}/{total}  {active} active  {rate:.1f}/s"
                 progress_bar(done, total, f"Extracting {label}", extra)
 
-    progress_done(f"Extracting {label} — {total} samples ({_max_workers()} threads, {elapsed_str(time.time() - t0)})")
+    elapsed = time.time() - t0
+    rate = total / elapsed if elapsed > 0 else 0
+    progress_done(f"{label} {total} done  peak:{peak_active} threads  {rate:.1f}/s  {elapsed_str(elapsed)}")
 
 
 def corr_score(a, b, hop_ms: int = HOP_MS, max_shift_sec: int = MAX_SHIFT_SEC):
@@ -677,8 +688,10 @@ def run_match(root: Path) -> Path:
     print(f"\n    Total: {len(head_files) + len(left_files) + len(right_files)} "
           f"files  ({format_size(total_size)})")
 
+    cpus = os.cpu_count() or 1
+    workers = _max_workers()
     print()
-    print(f"  ── STEP 2/4 : Extracting audio ({_max_workers()} threads) ────────")
+    print(f"  ── STEP 2/4 : Extracting audio ({cpus} CPUs, {workers} threads) ──")
     print()
 
     preextract_audio(head_files, "HEAD ")
