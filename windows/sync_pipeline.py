@@ -31,16 +31,16 @@ EXTENSIONS = {".mov", ".mp4", ".mxf", ".avi"}
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
 
-# ── matching thresholds (tightened) ─────────────────────────────────
+# ── matching thresholds ─────────────────────────────────────────────
 DURATION_TOL_SEC = 75
 MAX_SIZE_RATIO = 1.8
 AUDIO_SR = 8000
-SAMPLE_SECONDS = 20
+SAMPLE_SECONDS = 30
 HOP_MS = 100
 MAX_SHIFT_SEC = 25
-MIN_AUDIO_SCORE = 0.28
-MIN_CONSENSUS_HITS = 2
-MIN_LR_AUDIO_SCORE = 0.20
+MIN_PAIR_SCORE = 0.25
+MIN_LR_SCORE = 0.20
+MIN_TRIPLET_AVG = 0.30
 
 # ── branding ────────────────────────────────────────────────────────
 APP_NAME = "EGO-WRIST-SYNCR"
@@ -360,20 +360,25 @@ def candidate_ok(a: dict, b: dict) -> bool:
 
 
 def choose_sample_starts(d1: float, d2: float) -> list[int]:
+    """Pick up to 5 evenly-spaced sample points across the clip."""
     m = min(d1, d2)
+    if m < SAMPLE_SECONDS:
+        return [0]
     starts = [0]
     if m > SAMPLE_SECONDS * 2:
-        starts.append(int(max(0, (m / 2) - (SAMPLE_SECONDS / 2))))
-    if m > SAMPLE_SECONDS * 4:
-        starts.append(int(max(0, m - SAMPLE_SECONDS - 10)))
-    if m > SAMPLE_SECONDS * 6:
         starts.append(int(m * 0.25))
+    if m > SAMPLE_SECONDS * 2.5:
+        starts.append(int(max(0, (m / 2) - (SAMPLE_SECONDS / 2))))
+    if m > SAMPLE_SECONDS * 3:
+        starts.append(int(m * 0.75 - SAMPLE_SECONDS))
+    if m > SAMPLE_SECONDS * 3.5:
+        starts.append(int(max(0, m - SAMPLE_SECONDS - 5)))
     seen: set[int] = set()
     return [s for s in starts if s not in seen and not seen.add(s)]  # type: ignore[func-returns-value]
 
 
-def audio_match_score_consensus(a: dict, b: dict):
-    """Multi-sample consensus: require MIN_CONSENSUS_HITS samples above threshold."""
+def audio_match_score(a: dict, b: dict):
+    """Sample up to 5 points, return best score, median score, and hit count."""
     starts = choose_sample_starts(a["duration"], b["duration"])
     scores: list[float] = []
     offsets: list[float] = []
@@ -386,32 +391,33 @@ def audio_match_score_consensus(a: dict, b: dict):
             offsets.append(offset)
 
     if not scores:
-        return None, None, 0
+        return None, None, None, 0
 
-    hits = sum(1 for s in scores if s >= MIN_AUDIO_SCORE)
+    hits = sum(1 for s in scores if s >= MIN_PAIR_SCORE)
     best_idx = int(np.argmax(scores))
-    return scores[best_idx], offsets[best_idx], hits
+    median = float(np.median(scores))
+    return scores[best_idx], offsets[best_idx], median, hits
 
 
 def combined_score(a: dict, b: dict):
     ds = duration_sim(a["duration"], b["duration"])
     ss = size_sim(a["size"], b["size"])
-    audio_score, offset, hits = audio_match_score_consensus(a, b)
-    if audio_score is None:
-        return None, None, ds, ss, None, 0
-    total = (audio_score * 0.75) + (ds * 0.15) + (ss * 0.10)
-    return total, offset, ds, ss, audio_score, hits
+    best_audio, offset, median_audio, hits = audio_match_score(a, b)
+    if best_audio is None:
+        return None, None, ds, ss, None, None, 0
+    total = (best_audio * 0.60) + (median_audio * 0.15) + (ds * 0.15) + (ss * 0.10)
+    return total, offset, ds, ss, best_audio, median_audio, hits
 
 
 def confidence_label(avg_total: float, avg_audio: float,
                      min_hits: int) -> str:
     if avg_audio is None:
         return "NO_AUDIO"
-    if avg_total >= 0.60 and avg_audio >= 0.50 and min_hits >= MIN_CONSENSUS_HITS:
+    if avg_total >= 0.55 and avg_audio >= 0.45 and min_hits >= 2:
         return "HIGH"
-    if avg_total >= 0.42 and avg_audio >= 0.32 and min_hits >= MIN_CONSENSUS_HITS:
+    if avg_total >= 0.40 and avg_audio >= 0.30:
         return "MEDIUM"
-    if avg_total >= 0.28 and avg_audio >= MIN_AUDIO_SCORE:
+    if avg_total >= MIN_TRIPLET_AVG:
         return "LOW"
     return "REVIEW"
 
@@ -476,12 +482,13 @@ def greedy_match(anchor_files: list[dict], other_files: list[dict],
 
             if not candidate_ok(a, b):
                 continue
-            total, offset, ds, ss, audio_score, hits = combined_score(a, b)
-            if total is None or audio_score is None or audio_score < MIN_AUDIO_SCORE:
+            total, offset, ds, ss, best_audio, median_audio, hits = combined_score(a, b)
+            if total is None or best_audio is None or best_audio < MIN_PAIR_SCORE:
                 continue
             candidates.append({
                 "anchor_idx": i, "other_idx": j,
-                "total": total, "audio_score": audio_score,
+                "total": total, "audio_score": best_audio,
+                "median_audio": median_audio,
                 "offset": offset, "duration_sim": ds, "size_sim": ss,
                 "hits": hits,
             })
@@ -506,14 +513,18 @@ def greedy_match(anchor_files: list[dict], other_files: list[dict],
 #  run_match  —  full scan + human-readable TXT
 # ═══════════════════════════════════════════════════════════════════
 
-def _write_match_txt(rows: list[dict], out_path: Path, root: Path,
+def _write_match_txt(rows: list[dict], unmatched: dict[str, list[str]],
+                     out_path: Path, root: Path,
                      camera_dirs: dict[str, Path]):
     """Write a human-readable, copy-paste-friendly match file."""
+    n_unmatched = sum(len(v) for v in unmatched.values())
     with out_path.open("w", encoding="utf-8") as f:
         f.write(f"EGO-WRIST-SYNCR  Matched Sets\n")
         f.write(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Source:    {root}\n")
-        f.write(f"Total:     {len(rows)} set(s)\n")
+        f.write(f"Matched:   {len(rows)} set(s)\n")
+        if n_unmatched:
+            f.write(f"Unmatched: {n_unmatched} file(s) had no confident match\n")
         f.write("=" * 70 + "\n\n")
 
         for row in rows:
@@ -533,8 +544,21 @@ def _write_match_txt(rows: list[dict], out_path: Path, root: Path,
                     f"  H-R {row['hr_audio']}"
                     f"  L-R {row['lr_audio']}\n")
             f.write(f"  Score     {row['avg_total_score']}"
-                    f"  (min consensus hits: {row['min_hits']})\n")
+                    f"  (hits: {row['min_hits']})\n")
             f.write("\n")
+
+        if n_unmatched:
+            f.write("\n")
+            f.write("=" * 70 + "\n")
+            f.write("UNMATCHED FILES  (no confident triplet found)\n")
+            f.write("=" * 70 + "\n\n")
+            for cam in ("HEAD", "LEFT", "RIGHT"):
+                files = unmatched.get(cam, [])
+                if files:
+                    f.write(f"  {cam} ({len(files)} files):\n")
+                    for fp in files:
+                        f.write(f"    {fp}\n")
+                    f.write("\n")
 
         f.write("=" * 70 + "\n")
         f.write("Copy any path above and paste into File Explorer to navigate there.\n")
@@ -606,8 +630,9 @@ def run_match(root: Path) -> Path:
     print()
 
     rows: list[dict] = []
-    rejected_no_lr = 0
-    rejected_consensus = 0
+    rejected_lr = 0
+    rejected_weak = 0
+    used_head: set[int] = set()
     used_left: set[int] = set()
     used_right: set[int] = set()
     triplet_total = len(head_files)
@@ -625,16 +650,18 @@ def run_match(root: Path) -> Path:
 
         left = left_files[left_idx]
         right = right_files[right_idx]
-        lr_total, lr_offset, _, _, lr_audio, lr_hits = combined_score(left, right)
+        lr_total, lr_offset, _, _, lr_best, lr_median, lr_hits = combined_score(left, right)
         hl = head_left[head_idx]
         hr = head_right[head_idx]
 
-        if lr_audio is not None and lr_audio < MIN_LR_AUDIO_SCORE:
-            rejected_no_lr += 1
+        if lr_best is not None and lr_best < MIN_LR_SCORE:
+            rejected_lr += 1
             continue
 
-        min_hits = min(hl["hits"], hr["hits"],
-                       lr_hits if lr_hits else 0)
+        pairwise_hits = [hl["hits"], hr["hits"]]
+        if lr_hits > 0:
+            pairwise_hits.append(lr_hits)
+        min_hits = min(pairwise_hits) if pairwise_hits else 0
 
         avg_total = float(np.mean([
             hl["total"], hr["total"],
@@ -642,10 +669,17 @@ def run_match(root: Path) -> Path:
         ]))
         avg_audio = float(np.mean([
             hl["audio_score"], hr["audio_score"],
-            lr_audio if lr_audio is not None else 0.0,
+            lr_best if lr_best is not None else 0.0,
         ]))
 
+        if avg_total < MIN_TRIPLET_AVG:
+            rejected_weak += 1
+            continue
+
         conf = confidence_label(avg_total, avg_audio, min_hits)
+        used_head.add(head_idx)
+        used_left.add(left_idx)
+        used_right.add(right_idx)
 
         rows.append({
             "set_id": f"SET_{len(rows)+1:03d}",
@@ -661,23 +695,36 @@ def run_match(root: Path) -> Path:
             "right_size_mb": round(right["size"] / (1024**2), 2),
             "hl_audio": round(hl["audio_score"], 4),
             "hr_audio": round(hr["audio_score"], 4),
-            "lr_audio": round(lr_audio, 4) if lr_audio is not None else "N/A",
+            "lr_audio": round(lr_best, 4) if lr_best is not None else "N/A",
             "avg_total_score": round(avg_total, 4),
             "avg_audio_score": round(avg_audio, 4),
             "min_hits": min_hits,
         })
-        used_left.add(left_idx)
-        used_right.add(right_idx)
 
     progress_done(f"Assembled {len(rows)} matched triplet(s)")
 
-    if rejected_no_lr:
-        print(f"    Rejected {rejected_no_lr} triplet(s): LEFT-RIGHT cross-validation failed")
+    if rejected_lr:
+        print(f"    Rejected {rejected_lr} triplet(s): LEFT-RIGHT cross-validation failed")
+    if rejected_weak:
+        print(f"    Rejected {rejected_weak} triplet(s): score below minimum threshold")
+
+    unmatched: dict[str, list[str]] = {"HEAD": [], "LEFT": [], "RIGHT": []}
+    for idx, f in enumerate(head_files):
+        if idx not in used_head:
+            unmatched["HEAD"].append(str(f["path"]))
+    for idx, f in enumerate(left_files):
+        if idx not in used_left:
+            unmatched["LEFT"].append(str(f["path"]))
+    for idx, f in enumerate(right_files):
+        if idx not in used_right:
+            unmatched["RIGHT"].append(str(f["path"]))
+
+    n_unmatched = sum(len(v) for v in unmatched.values())
 
     rows.sort(key=lambda x: x["avg_total_score"], reverse=True)
 
     out_txt = root / MATCH_FILE
-    _write_match_txt(rows, out_txt, root, camera_dirs)
+    _write_match_txt(rows, unmatched, out_txt, root, camera_dirs)
 
     high = sum(1 for r in rows if r["confidence"] == "HIGH")
     med = sum(1 for r in rows if r["confidence"] == "MEDIUM")
@@ -688,6 +735,8 @@ def run_match(root: Path) -> Path:
     print("  ┌─────────────────────────────────────────────────┐")
     print(f"  │  ✓  Matched sets : {len(rows):<31}│")
     print(f"  │     HIGH: {high}   MEDIUM: {med}   LOW: {low}   REVIEW: {rev:<5}│")
+    if n_unmatched:
+        print(f"  │  ⚠  Unmatched   : {n_unmatched} file(s) had no match     │")
     print(f"  │     Written to  : {MATCH_FILE:<31}│")
     print("  └─────────────────────────────────────────────────┘")
     print()
