@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
 
@@ -310,8 +311,8 @@ def make_envelope_from_pcm(raw_bytes: bytes, sr: int = AUDIO_SR, hop_ms: int = H
     return env
 
 
-@lru_cache(maxsize=10000)
-def extract_env(path_str: str, start_sec: int):
+def _extract_env_raw(path_str: str, start_sec: int):
+    """Extract audio envelope from a file — no caching, safe for workers."""
     cmd = [
         FFMPEG, "-v", "error",
         "-ss", str(start_sec), "-i", path_str,
@@ -323,6 +324,59 @@ def extract_env(path_str: str, start_sec: int):
     except Exception:
         return None
     return make_envelope_from_pcm(raw)
+
+
+_env_cache: dict[tuple[str, int], object] = {}
+
+
+def extract_env(path_str: str, start_sec: int):
+    key = (path_str, start_sec)
+    if key in _env_cache:
+        return _env_cache[key]
+    result = _extract_env_raw(path_str, start_sec)
+    _env_cache[key] = result
+    return result
+
+
+def _max_workers() -> int:
+    cpus = os.cpu_count() or 4
+    return max(4, cpus)
+
+
+def preextract_audio(files: list[dict], label: str):
+    """Pre-extract audio envelopes for all files at all sample points in parallel."""
+    jobs: list[tuple[str, int]] = []
+    for f in files:
+        for start in choose_sample_starts(f["duration"], f["duration"]):
+            key = (str(f["path"]), start)
+            if key not in _env_cache:
+                jobs.append(key)
+
+    if not jobs:
+        return
+
+    total = len(jobs)
+    done = 0
+    t0 = time.time()
+    workers = _max_workers()
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(_extract_env_raw, path_str, start): (path_str, start)
+            for path_str, start in jobs
+        }
+        for future in as_completed(futures):
+            path_str, start = futures[future]
+            try:
+                _env_cache[(path_str, start)] = future.result()
+            except Exception:
+                _env_cache[(path_str, start)] = None
+            done += 1
+            if done % max(1, total // 50) == 0 or done == total:
+                extra = f"{done}/{total}  {_max_workers()}T  {elapsed_str(time.time() - t0)}"
+                progress_bar(done, total, f"Extracting {label}", extra)
+
+    progress_done(f"Extracting {label} — {total} samples ({_max_workers()} threads, {elapsed_str(time.time() - t0)})")
 
 
 def corr_score(a, b, hop_ms: int = HOP_MS, max_shift_sec: int = MAX_SHIFT_SEC):
@@ -609,7 +663,7 @@ def run_match(root: Path) -> Path:
         )
 
     print()
-    print("  ── STEP 1/3 : Scanning camera folders ─────────────────")
+    print("  ── STEP 1/4 : Scanning camera folders ─────────────────")
     print()
 
     head_files = scan_folder(camera_dirs["HEAD"], "HEAD ")
@@ -621,14 +675,22 @@ def run_match(root: Path) -> Path:
           f"files  ({format_size(total_size)})")
 
     print()
-    print("  ── STEP 2/3 : Audio fingerprint matching ──────────────")
+    print(f"  ── STEP 2/4 : Extracting audio ({_max_workers()} threads) ────────")
+    print()
+
+    preextract_audio(head_files, "HEAD ")
+    preextract_audio(left_files, "LEFT ")
+    preextract_audio(right_files, "RIGHT")
+
+    print()
+    print("  ── STEP 3/4 : Audio fingerprint matching ──────────────")
     print()
 
     head_left = greedy_match(head_files, left_files, "HEAD → LEFT ")
     head_right = greedy_match(head_files, right_files, "HEAD → RIGHT")
 
     print()
-    print("  ── STEP 3/3 : Building triplets (cross-validated) ─────")
+    print("  ── STEP 4/4 : Building triplets (cross-validated) ─────")
     print()
 
     rows: list[dict] = []
