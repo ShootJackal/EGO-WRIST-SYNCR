@@ -3,16 +3,6 @@
 Automatically matches HEAD, LEFT and RIGHT camera clips by audio
 fingerprinting and packages them into upload-ready sets.
 
-## Releasing (for repo owner)
-
-1. Merge all changes into `main`.
-2. Tag and push: `git tag v2.1.0 && git push origin v2.1.0`
-3. GitHub Actions will automatically:
-   - Compile `TriCamSync.exe` (Windows) and `TriCamSync` (macOS) via PyInstaller
-   - Bundle them with launcher scripts and READMEs (no `.py` source files)
-   - Create a GitHub Release with `TriCamSync-Windows.zip` and `TriCamSync-macOS.zip`
-4. Share the release download links with customers.
-
 **What's in the release ZIPs (no source code):**
 - `TriCamSync.exe` / `TriCamSync` — compiled executable
 - `LAUNCH.bat` / `LAUNCH.command` — double-click launcher
